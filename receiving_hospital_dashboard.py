@@ -1,11 +1,12 @@
-# receiving_hospital_dashboard.py
-# Streamlit MVP – Receiving Hospital Dashboard (synthetic data + live workflow + analytics)
+# receiving_hospital_dashboard_plus.py
+# Streamlit MVP – Receiving Hospital Dashboard
+# Features: multi-day synthetic data, date-range & calendar analytics, notifications center, live workflow.
 
 import streamlit as st
 import pandas as pd
 import numpy as np
 import altair as alt
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 import time
 import random
 import uuid
@@ -13,7 +14,7 @@ import json
 from statistics import median
 
 # -------------------- Page Setup & Style --------------------
-st.set_page_config(page_title="Receiving Hospital – AHECN MVP", layout="wide")
+st.set_page_config(page_title="Receiving Hospital – AHECN (Enhanced)", layout="wide")
 
 st.markdown("""
 <style>
@@ -35,6 +36,14 @@ html, body, [class*="css"] { font-family: Inter, system-ui, -apple-system, Segoe
 .small{ color:#94a3b8; font-size:.85rem }
 .btnline > div > button{ width:100% }
 .audit{ background:#1e293b; border-left:3px solid #8b5cf6; padding:6px 10px; border-radius:6px; margin:4px 0 }
+.ntf{ background:#111827; border:1px solid #1f2937; border-radius:10px; padding:8px 10px; margin:6px 0 }
+.ntf.unread{ border-color:#3b82f6 }
+.ntf .title{ font-weight:700; }
+.ntf .meta{ color:#94a3b8; font-size:.78rem }
+.headerbar{ display:flex; align-items:center; gap:.75rem; justify-content:space-between; }
+.headerbar .left{ display:flex; align-items:center; gap:.75rem }
+.headerbar .right{ display:flex; align-items:center; gap:.5rem }
+.bell{ font-weight:700; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -42,9 +51,10 @@ html, body, [class*="css"] { font-family: Inter, system-ui, -apple-system, Segoe
 def now_ts() -> float:
     return time.time()
 
-def fmt_ts(ts: float) -> str:
+def fmt_ts(ts: float, short=False) -> str:
+    if not ts: return "—"
     try:
-        return datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M")
+        return datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M" if not short else "%H:%M")
     except Exception:
         return "—"
 
@@ -57,6 +67,13 @@ def minutes_between(t1, t2) -> float:
     if not t1 or not t2: return None
     return (t2 - t1) / 60.0
 
+def within_date_range(ts: float, d0: date, d1: date) -> bool:
+    try:
+        d = datetime.fromtimestamp(ts).date()
+        return d0 <= d <= d1
+    except Exception:
+        return False
+
 # -------------------- Synthetic Data --------------------
 FACILITY_POOL = [
     "NEIGRIHMS", "Civil Hospital Shillong", "Nazareth Hospital",
@@ -68,144 +85,233 @@ PRIORITY = ["Routine", "Urgent", "STAT"]
 TRIAGE = ["RED", "YELLOW", "GREEN"]
 REJECT_REASONS = ["No ICU bed", "No specialist", "Equipment down", "Over capacity", "Outside scope", "Patient diverted"]
 
-def seed_referrals_for_today(n=120, seed=2025):
+def _seed_one(rng: random.Random, day_epoch: float, dest: str):
+    compl = rng.choices(COMPLAINTS, weights=[0.2,0.22,0.18,0.18,0.15,0.07])[0]
+    tri = rng.choices(TRIAGE, weights=[0.34,0.44,0.22])[0]
+    priority = rng.choices(PRIORITY, weights=[0.25,0.5,0.25])[0]
+    amb = rng.choices(AMB_TYPES, weights=[0.45,0.32,0.15,0.03,0.05])[0]
+
+    first_contact = day_epoch + rng.randint(0, 23*3600)
+    decision_ts = first_contact + rng.randint(60, 25*60)
+    dispatch_ts = decision_ts + rng.randint(2*60, 12*60)
+    travel_min = rng.randint(8, 85)
+    arrive_dest_ts = dispatch_ts + travel_min*60
+    handover_ts = arrive_dest_ts + rng.randint(5*60, 35*60)
+
+    status = rng.choices(
+        ["PREALERT","ACCEPTED","ENROUTE","ARRIVE_DEST","HANDOVER","REJECTED"],
+        weights=[0.24,0.15,0.22,0.2,0.14,0.05]
+    )[0]
+
+    times = {"first_contact_ts": first_contact, "decision_ts": decision_ts}
+    if status in ["ACCEPTED","ENROUTE","ARRIVE_DEST","HANDOVER"]:
+        times["dispatch_ts"] = dispatch_ts
+    if status in ["ENROUTE","ARRIVE_DEST","HANDOVER"]:
+        times["enroute_ts"] = dispatch_ts + rng.randint(0, 3*60)
+    if status in ["ARRIVE_DEST","HANDOVER"]:
+        times["arrive_dest_ts"] = arrive_dest_ts
+    if status in ["HANDOVER"]:
+        times["handover_ts"] = handover_ts
+
+    age = rng.randint(1, 85)
+    sex = rng.choice(["Male","Female"])
+    pid = f"PID-{rng.randint(100000,999999)}"
+    ref_name = rng.choice(["Dr. Rai", "Dr. Khonglah", "ANM Pynsuk", "Dr. Sharma", "Dr. Singh"])
+    ref_fac = rng.choice(["PHC Mawlai","CHC Smit","CHC Pynursla","District Hospital Shillong","PHC Nongpoh","CHC Jowai"])
+    eta_min = travel_min if status in ["ENROUTE","ARRIVE_DEST"] else rng.randint(10, 90)
+    transport = {"priority": priority, "ambulance": amb, "eta_min": eta_min}
+    dx_label = {
+        "Maternal":"Postpartum haemorrhage",
+        "Trauma":"Head injury, possible SDH",
+        "Stroke":"Acute ischemic stroke",
+        "Cardiac":"Suspected STEMI",
+        "Sepsis":"Sepsis, hypotension",
+        "Other":"Acute respiratory failure"
+    }[compl]
+    pdx = {"code":"-", "label":dx_label, "case_type":compl}
+
+    return dict(
+        id=str(uuid.uuid4())[:8].upper(),
+        patient={"name": f"Pt-{rng.randint(0,9999):04d}", "age": age, "sex": sex, "id": pid},
+        referrer={"name": ref_name, "facility": ref_fac, "role": rng.choice(["Doctor/Physician","ANM/ASHA/EMT"])},
+        provisionalDx=pdx,
+        triage={"complaint": compl, "decision":{"color":tri}, "hr": rng.randint(60,150),
+                "sbp": rng.randint(80,180), "rr": rng.randint(12,35),
+                "temp": round(rng.uniform(36.0,39.8),1), "spo2": rng.randint(86,99), "avpu": "A"},
+        dest=dest,
+        transport=transport,
+        resuscitation=[],
+        interventions=[],
+        times=times,
+        status=status,
+        audit_log=[]
+    )
+
+def seed_referrals_range(days=60, seed=2025):
     rng = random.Random(seed)
+    all_refs = []
     today = datetime.now().date()
-    start = datetime.combine(today, datetime.min.time()).timestamp()
-    referrals = []
-
-    for i in range(n):
-        compl = rng.choices(COMPLAINTS, weights=[0.2,0.22,0.18,0.18,0.15,0.07])[0]
-        tri = rng.choices(TRIAGE, weights=[0.34,0.44,0.22])[0]
-        priority = rng.choices(PRIORITY, weights=[0.25,0.5,0.25])[0]
-        amb = rng.choices(AMB_TYPES, weights=[0.45,0.32,0.15,0.03,0.05])[0]
-
-        # timestamps spread across the day
-        first_contact = start + rng.randint(0, 23*3600)
-        decision_ts = first_contact + rng.randint(60, 25*60)
-        dispatch_ts = decision_ts + rng.randint(2*60, 12*60)
-        travel_min = rng.randint(8, 85)
-        arrive_dest_ts = dispatch_ts + travel_min*60
-        handover_ts = arrive_dest_ts + rng.randint(5*60, 35*60)
-
-        status = rng.choices(
-            ["PREALERT","ACCEPTED","ENROUTE","ARRIVE_DEST","HANDOVER","REJECTED"],
-            weights=[0.25,0.15,0.2,0.2,0.15,0.05]
-        )[0]
-        # enforce timestamp presence based on status
-        times = {"first_contact_ts": first_contact, "decision_ts": decision_ts}
-        if status in ["ACCEPTED","ENROUTE","ARRIVE_DEST","HANDOVER"]:
-            times["dispatch_ts"] = dispatch_ts
-        if status in ["ENROUTE","ARRIVE_DEST","HANDOVER"]:
-            times["enroute_ts"] = dispatch_ts + rng.randint(0, 3*60)
-        if status in ["ARRIVE_DEST","HANDOVER"]:
-            times["arrive_dest_ts"] = arrive_dest_ts
-        if status in ["HANDOVER"]:
-            times["handover_ts"] = handover_ts
-
-        # pick receiving facility randomly (we’ll filter to the chosen one in UI)
-        dest = rng.choice(FACILITY_POOL)
-
-        # patient & referrer
-        age = rng.randint(1, 85)
-        sex = rng.choice(["Male","Female"])
-        pid = f"PID-{rng.randint(100000,999999)}"
-        ref_name = rng.choice(["Dr. Rai", "Dr. Khonglah", "ANM Pynsuk", "Dr. Sharma", "Dr. Singh"])
-        ref_fac = rng.choice(["PHC Mawlai","CHC Smit","CHC Pynursla","District Hospital Shillong","PHC Nongpoh","CHC Jowai"])
-
-        # ETA & transport
-        eta_min = travel_min if status in ["ENROUTE","ARRIVE_DEST"] else rng.randint(10, 90)
-        transport = {"priority": priority, "ambulance": amb, "eta_min": eta_min}
-
-        # provisional diagnosis (simple seed)
-        dx_label = {
-            "Maternal":"Postpartum haemorrhage",
-            "Trauma":"Head injury, possible SDH",
-            "Stroke":"Acute ischemic stroke",
-            "Cardiac":"Suspected STEMI",
-            "Sepsis":"Sepsis, hypotension",
-            "Other":"Acute respiratory failure"
-        }[compl]
-        pdx = {"code":"-", "label":dx_label, "case_type":compl}
-
-        rec = dict(
-            id=str(uuid.uuid4())[:8].upper(),
-            patient={"name": f"Pt-{i:04d}", "age": age, "sex": sex, "id": pid},
-            referrer={"name": ref_name, "facility": ref_fac, "role": rng.choice(["Doctor/Physician","ANM/ASHA/EMT"])},
-            provisionalDx=pdx,
-            triage={"complaint": compl, "decision":{"color":tri}, "hr": rng.randint(60,150),
-                    "sbp": rng.randint(80,180), "rr": rng.randint(12,35),
-                    "temp": round(rng.uniform(36.0,39.8),1), "spo2": rng.randint(86,99), "avpu": "A"},
-            dest=dest,
-            transport=transport,
-            resuscitation=[],
-            interventions=[],
-            times=times,
-            status=status,
-            audit_log=[]
-        )
-        referrals.append(rec)
-
-    return referrals
+    for i in range(days):
+        d = today - timedelta(days=i)
+        day_epoch = datetime.combine(d, datetime.min.time()).timestamp()
+        # daily volume (random, slightly higher weekdays)
+        weekday = d.weekday()
+        base = rng.randint(90, 160) if weekday < 5 else rng.randint(60, 120)
+        # distribute across facilities
+        for dest in FACILITY_POOL:
+            k = max(0, int(base * rng.uniform(0.12, 0.22)))  # ~12-22% share per facility
+            for _ in range(k):
+                all_refs.append(_seed_one(rng, day_epoch, dest))
+    return all_refs
 
 # -------------------- Session State --------------------
-if "referrals_today" not in st.session_state:
-    st.session_state.referrals_today = seed_referrals_for_today(n=140)
+if "referrals_all" not in st.session_state:
+    st.session_state.referrals_all = seed_referrals_range(days=60, seed=2025)
 
 if "facilities" not in st.session_state:
-    # For dashboard scope, we center on facilities in pool
     st.session_state.facilities = FACILITY_POOL.copy()
 
 if "facility_meta" not in st.session_state:
-    # minimal capacity meta per facility
     st.session_state.facility_meta = {
         f: {"ICU_open": random.randint(0,8), "acceptanceRate": round(random.uniform(0.65,0.92),2)}
         for f in st.session_state.facilities
     }
 
+# Notifications state
+if "notifications" not in st.session_state:
+    st.session_state.notifications = []  # list of {id, ts, kind, title, body, ref_id, read, severity}
+
+if "show_notifs" not in st.session_state:
+    st.session_state.show_notifs = False
+
+if "notify_rules" not in st.session_state:
+    st.session_state.notify_rules = {"RED_only": True, "eta_soon": True, "rejections": True}
+
+def push_notification(kind: str, title: str, body: str, ref_id: str = None, severity: str = "info"):
+    st.session_state.notifications.insert(0, {
+        "id": str(uuid.uuid4())[:8],
+        "ts": now_ts(),
+        "kind": kind, "title": title, "body": body,
+        "ref_id": ref_id, "read": False, "severity": severity
+    })
+
+def unread_count():
+    return sum(1 for n in st.session_state.notifications if not n["read"])
+
 # -------------------- Sidebar Controls --------------------
 st.sidebar.header("Receiving Hospital")
-facility = st.sidebar.selectbox("Select facility (you are receiving for):", st.session_state.facilities, index=1)
-meta = st.session_state.facility_meta.get(facility, {"ICU_open":0, "acceptanceRate":0.75})
+facility = st.sidebar.selectbox("You are receiving for:", st.session_state.facilities, index=1)
 
-icu_new = st.sidebar.number_input("ICU beds available (editable)", min_value=0, max_value=50, value=int(meta["ICU_open"]))
+meta = st.session_state.facility_meta.get(facility, {"ICU_open":0, "acceptanceRate":0.75})
+icu_new = st.sidebar.number_input("ICU beds available (editable)", min_value=0, max_value=100, value=int(meta["ICU_open"]))
 st.session_state.facility_meta[facility]["ICU_open"] = int(icu_new)
 
-st.sidebar.caption("Tip: use the buttons below to refresh or regenerate the day’s synthetic load.")
+st.sidebar.markdown("**Date range**")
+default_end = datetime.now().date()
+default_start = default_end - timedelta(days=6)
+date_range = st.sidebar.date_input("Pick range", (default_start, default_end))
+if isinstance(date_range, tuple) and len(date_range) == 2:
+    d0, d1 = date_range
+else:
+    d0, d1 = default_start, default_end
+
+st.sidebar.markdown("**Notification rules**")
+st.session_state.notify_rules["RED_only"] = st.sidebar.checkbox("Critical pre-alerts (RED)", value=True)
+st.session_state.notify_rules["eta_soon"] = st.sidebar.checkbox("ETA ≤ 15 min", value=True)
+st.session_state.notify_rules["rejections"] = st.sidebar.checkbox("Rejections", value=True)
+
 c1, c2 = st.sidebar.columns(2)
-if c1.button("Refresh data"):
+if c1.button("Refresh"):
     st.rerun()
-if c2.button("New day load"):
-    st.session_state.referrals_today = seed_referrals_for_today(n=140, seed=int(time.time()) % 10_000_000)
+if c2.button("Regenerate (60 days)"):
+    st.session_state.referrals_all = seed_referrals_range(days=60, seed=int(time.time()) % 10_000_000)
     st.rerun()
 
-# -------------------- Data Views (Today + Facility) --------------------
-today = datetime.now().date()
-def is_today(ts):
-    try:
-        dt = datetime.fromtimestamp(ts).date()
-        return dt == today
-    except Exception:
-        return False
+# -------------------- Filtered dataset --------------------
+refs = [r for r in st.session_state.referrals_all if r["dest"] == facility and within_date_range(r["times"].get("first_contact_ts", now_ts()), d0, d1)]
 
-# same-day referrals for selected facility (primary or included as destination)
-ref_all = [r for r in st.session_state.referrals_today if r["dest"] == facility and is_today(r["times"].get("first_contact_ts", now_ts()))]
+# -------------------- Header with Notifications --------------------
+left, right = st.columns([6, 2])
+with left:
+    st.markdown(f'<div class="headerbar"><div class="left"><h2>Receiving Hospital Dashboard – {facility}</h2></div></div>', unsafe_allow_html=True)
+with right:
+    n_unread = unread_count()
+    bell_label = f"🔔 Notifications ({n_unread})" if n_unread else "🔔 Notifications"
+    if st.button(bell_label, use_container_width=True):
+        st.session_state.show_notifs = not st.session_state.show_notifs
 
-# -------------------- KPIs --------------------
-total = len(ref_all)
-awaiting = len([r for r in ref_all if r["status"] in ["PREALERT","ACCEPTED","ENROUTE"]])
-enroute = len([r for r in ref_all if r["status"] == "ENROUTE"])
-arrived = len([r for r in ref_all if r["status"] == "ARRIVE_DEST"])
-handover = len([r for r in ref_all if r["status"] == "HANDOVER"])
-rejected = len([r for r in ref_all if r["status"] == "REJECTED"])
-accept_base = len([r for r in ref_all if r["status"] in ["PREALERT","ACCEPTED","ENROUTE","ARRIVE_DEST","HANDOVER","REJECTED"]])
+if st.session_state.show_notifs:
+    st.markdown("#### Notifications Center")
+    colN1, colN2, colN3 = st.columns([1, 1, 2])
+    with colN1:
+        if st.button("Mark all read"):
+            for n in st.session_state.notifications:
+                n["read"] = True
+    with colN2:
+        if st.button("Clear all"):
+            st.session_state.notifications = []
+    with colN3:
+        st.caption("System generates notifications on accepted RED cases, ETA soon, and rejections (configurable in sidebar).")
+
+    # Filter controls
+    fcol1, fcol2 = st.columns([1, 3])
+    with fcol1:
+        show_unread_only = st.checkbox("Unread only", value=False)
+    with fcol2:
+        kind_filter = st.multiselect("Types", ["RED_PREALERT","ETA_SOON","REJECTED","STATUS"], default=[])
+
+    for n in st.session_state.notifications:
+        if show_unread_only and n["read"]: 
+            continue
+        if kind_filter and n["kind"] not in kind_filter:
+            continue
+        classes = "ntf unread" if not n["read"] else "ntf"
+        t = fmt_ts(n["ts"], short=True)
+        st.markdown(f"""
+        <div class="{classes}">
+            <div class="title">{n['title']}</div>
+            <div class="meta">{t} • {n['kind']} • Ref: {n.get('ref_id','—')}</div>
+            <div class="body small">{n['body']}</div>
+        </div>
+        """, unsafe_allow_html=True)
+    st.markdown('<hr class="soft" />', unsafe_allow_html=True)
+
+# -------------------- KPIs (range) --------------------
+def to_row(r):
+    t = r["times"]
+    return {
+        "id": r["id"],
+        "status": r["status"],
+        "triage": r["triage"]["decision"]["color"],
+        "case_type": r["triage"]["complaint"],
+        "priority": r["transport"].get("priority","Urgent"),
+        "ambulance": r["transport"].get("ambulance","—"),
+        "eta_min": r["transport"].get("eta_min"),
+        "first_contact": datetime.fromtimestamp(t.get("first_contact_ts", now_ts())),
+        "decision_ts": t.get("decision_ts"),
+        "dispatch_ts": t.get("dispatch_ts"),
+        "arrive_dest_ts": t.get("arrive_dest_ts"),
+        "handover_ts": t.get("handover_ts"),
+        "decision_to_dispatch_min": minutes_between(t.get("decision_ts"), t.get("dispatch_ts")),
+        "dispatch_to_arrival_min": minutes_between(t.get("dispatch_ts"), t.get("arrive_dest_ts")),
+        "arrival_to_handover_min": minutes_between(t.get("arrive_dest_ts"), t.get("handover_ts")),
+    }
+
+adf = pd.DataFrame([to_row(r) for r in refs])
+
+total = len(adf)
+awaiting = len(adf[adf["status"].isin(["PREALERT","ACCEPTED","ENROUTE"])])
+enroute = len(adf[adf["status"]=="ENROUTE"])
+arrived = len(adf[adf["status"]=="ARRIVE_DEST"])
+handover = len(adf[adf["status"]=="HANDOVER"])
+rejected = len(adf[adf["status"]=="REJECTED"])
+accept_base = len(adf[adf["status"].isin(["PREALERT","ACCEPTED","ENROUTE","ARRIVE_DEST","HANDOVER","REJECTED"])])
 accept_rate = (100.0 * (accept_base - rejected) / accept_base) if accept_base else 0.0
-eta_vals = [r["transport"].get("eta_min") for r in ref_all if r["status"] in ["ENROUTE","ARRIVE_DEST"] and r["transport"].get("eta_min") is not None]
+eta_vals = adf.loc[adf["status"].isin(["ENROUTE","ARRIVE_DEST"]) & adf["eta_min"].notna(), "eta_min"].tolist()
 avg_eta = round(sum(eta_vals)/len(eta_vals),1) if eta_vals else 0.0
 
-st.title(f"Receiving Hospital Dashboard – {facility}")
 k1,k2,k3,k4,k5,k6 = st.columns(6)
-with k1: st.markdown(f'<div class="kpi"><div class="label">Referrals today</div><div class="value">{total}</div></div>', unsafe_allow_html=True)
+with k1: st.markdown(f'<div class="kpi"><div class="label">Referrals (range)</div><div class="value">{total}</div></div>', unsafe_allow_html=True)
 with k2: st.markdown(f'<div class="kpi"><div class="label">Awaiting/Active</div><div class="value">{awaiting}</div></div>', unsafe_allow_html=True)
 with k3: st.markdown(f'<div class="kpi"><div class="label">En Route</div><div class="value">{enroute}</div></div>', unsafe_allow_html=True)
 with k4: st.markdown(f'<div class="kpi"><div class="label">Arrived</div><div class="value">{arrived}</div></div>', unsafe_allow_html=True)
@@ -214,22 +320,43 @@ with k6: st.markdown(f'<div class="kpi"><div class="label">ICU Beds Open</div><d
 
 st.markdown('<hr class="soft" />', unsafe_allow_html=True)
 
-# -------------------- Work Queue --------------------
-st.subheader("Incoming Queue & Ongoing Receiving")
-st.caption("Actions: Accept / Reject • Mark En Route / Arrived / Handover • Log vitals & interventions • Generate ISBAR")
+# -------------------- Work Queue (today only for operations) --------------------
+st.subheader("Incoming Queue & Ongoing Receiving (today)")
+today = datetime.now().date()
+today_refs = [r for r in refs if r["times"].get("first_contact_ts") and datetime.fromtimestamp(r["times"]["first_contact_ts"]).date() == today]
 
-# Define a consistent status flow
-# PREALERT -> ACCEPTED -> ENROUTE -> ARRIVE_DEST -> HANDOVER
 priority_rank = {"STAT":0, "Urgent":1, "Routine":2}
 status_rank = {"PREALERT":0, "ACCEPTED":1, "ENROUTE":2, "ARRIVE_DEST":3, "HANDOVER":4, "REJECTED":5}
 
 queue = sorted(
-    [r for r in ref_all if r["status"] in ["PREALERT","ACCEPTED","ENROUTE","ARRIVE_DEST"]],
+    [r for r in today_refs if r["status"] in ["PREALERT","ACCEPTED","ENROUTE","ARRIVE_DEST"]],
     key=lambda x: (status_rank.get(x["status"],9), priority_rank.get(x["transport"].get("priority","Urgent"),1), -x["times"].get("decision_ts", 0))
 )
 
+# Quick create (simulate a new pre-alert)
+with st.expander("🧪 Simulate a new pre-alert (for testing)"):
+    sim_col1, sim_col2, sim_col3, sim_col4 = st.columns(4)
+    compl_new = sim_col1.selectbox("Case", COMPLAINTS, index=0, key="sim_case")
+    tri_new = sim_col2.selectbox("Triage", TRIAGE, index=0, key="sim_tri")
+    pr_new = sim_col3.selectbox("Priority", PRIORITY, index=1, key="sim_pr")
+    amb_new = sim_col4.selectbox("Ambulance", AMB_TYPES, index=1, key="sim_amb")
+    if st.button("➕ Add pre-alert now"):
+        rng = random.Random(int(now_ts()))
+        day_epoch = datetime.combine(today, datetime.min.time()).timestamp()
+        r = _seed_one(rng, day_epoch, facility)
+        r["status"] = "PREALERT"
+        r["triage"]["decision"]["color"] = tri_new
+        r["triage"]["complaint"] = compl_new
+        r["transport"]["priority"] = pr_new
+        r["transport"]["ambulance"] = amb_new
+        st.session_state.referrals_all.insert(0, r)
+        if st.session_state.notify_rules["RED_only"] and tri_new == "RED":
+            push_notification("RED_PREALERT", "Critical pre-alert", f"{compl_new} • {tri_new} • Priority {pr_new}", r["id"], "warning")
+        st.success("Pre-alert added")
+        st.rerun()
+
 if not queue:
-    st.info("No active or awaiting referrals at this time.")
+    st.info("No active or awaiting referrals for today.")
 else:
     for r in queue:
         with st.container():
@@ -246,11 +373,14 @@ else:
                 st.write(f"**ETA:** {eta_txt} min  •  **Amb:** {r['transport'].get('ambulance','—')}  •  **Priority:** {r['transport'].get('priority','Urgent')}")
 
             a1,a2,a3,a4,a5 = st.columns(5)
+
             # Accept
             if a1.button("Accept", key=f"acc_{r['id']}", use_container_width=True, disabled=r["status"] not in ["PREALERT","ACCEPTED"]):
                 if r["status"] == "PREALERT":
                     r["status"] = "ACCEPTED"
                 r["audit_log"].append({"ts": datetime.now().isoformat(), "action":"ACCEPTED"})
+                if r["triage"]["decision"]["color"] == "RED" and st.session_state.notify_rules["RED_only"]:
+                    push_notification("RED_PREALERT", "Accepted RED pre-alert", f"{r['triage']['complaint']} • Priority {r['transport'].get('priority','Urgent')}", r["id"], "warning")
                 st.rerun()
 
             # Mark En Route
@@ -259,6 +389,9 @@ else:
                 r["times"]["dispatch_ts"] = r["times"].get("dispatch_ts", now_ts())
                 r["times"]["enroute_ts"] = now_ts()
                 r["audit_log"].append({"ts": datetime.now().isoformat(), "action":"ENROUTE"})
+                eta = r["transport"].get("eta_min")
+                if eta is not None and eta <= 15 and st.session_state.notify_rules["eta_soon"]:
+                    push_notification("ETA_SOON", f"ETA {eta} min", f"{r['patient']['name']} • {r['triage']['complaint']}", r["id"], "info")
                 st.rerun()
 
             # Arrived
@@ -280,6 +413,8 @@ else:
             if a5.button("Reject", key=f"rej_{r['id']}", use_container_width=True, disabled=rej_reason=="—"):
                 r["status"] = "REJECTED"
                 r["audit_log"].append({"ts": datetime.now().isoformat(), "action":"REJECTED", "reason": rej_reason})
+                if st.session_state.notify_rules["rejections"]:
+                    push_notification("REJECTED", "Case rejected", f"{rej_reason} • {r['triage']['complaint']}", r["id"], "bad")
                 st.warning(f"Case rejected: {rej_reason}")
                 st.rerun()
 
@@ -334,18 +469,6 @@ else:
                 else:
                     st.caption("No vitals history yet.")
 
-                st.markdown("**Interventions (quick)**")
-                qcols = st.columns(6)
-                quick_list = ["Oxygen","IV Access","IV Fluids","Uterotonics","TXA","Aspirin"]
-                quick_sel = []
-                for i, q in enumerate(quick_list):
-                    if qcols[i].checkbox(q, key=f"iv_{r['id']}_{i}"): quick_sel.append(q)
-                if st.button("💾 Save interventions", key=f"saveiv_{r['id']}"):
-                    for name in quick_sel:
-                        r["interventions"].append({"name": name, "type":"emt", "timestamp": now_ts(), "status":"completed"})
-                    st.success(f"Saved {len(quick_sel)} interventions")
-                    st.rerun()
-
                 st.markdown("**ISBAR (auto)**")
                 isbar = f"""I: {r['patient']['name']}, {r['patient']['age']}{r['patient']['sex']} • {r['id']}
 S: {r['triage']['complaint']} • Triage {r['triage']['decision']['color']} • Priority {r['transport'].get('priority','Urgent')}
@@ -357,53 +480,46 @@ R: {"Arrived" if r["status"] in ["ARRIVE_DEST","HANDOVER"] else "En route"} • 
 
             st.markdown('</div>', unsafe_allow_html=True)
 
-# -------------------- Analytics (Today) --------------------
-st.subheader("Today’s Analytics")
-if not ref_all:
-    st.info("No same-day data for this facility.")
+# -------------------- Advanced Analytics (date range) --------------------
+st.subheader("Analytics – Date Range")
+
+if adf.empty:
+    st.info("No data in the selected date range.")
 else:
-    # Build a dataframe for analysis
-    def to_row(r):
-        t = r["times"]
-        return {
-            "id": r["id"],
-            "status": r["status"],
-            "triage": r["triage"]["decision"]["color"],
-            "case_type": r["triage"]["complaint"],
-            "priority": r["transport"].get("priority","Urgent"),
-            "ambulance": r["transport"].get("ambulance","—"),
-            "eta_min": r["transport"].get("eta_min"),
-            "first_contact": datetime.fromtimestamp(t.get("first_contact_ts", now_ts())),
-            "decision_ts": t.get("decision_ts"),
-            "dispatch_ts": t.get("dispatch_ts"),
-            "arrive_dest_ts": t.get("arrive_dest_ts"),
-            "handover_ts": t.get("handover_ts"),
-            "decision_to_dispatch_min": minutes_between(t.get("decision_ts"), t.get("dispatch_ts")),
-            "dispatch_to_arrival_min": minutes_between(t.get("dispatch_ts"), t.get("arrive_dest_ts")),
-            "arrival_to_handover_min": minutes_between(t.get("arrive_dest_ts"), t.get("handover_ts")),
-        }
-    adf = pd.DataFrame([to_row(r) for r in ref_all])
+    # Calendar heatmap (referrals per day)
+    cal = adf.copy()
+    cal["date"] = pd.to_datetime(cal["first_contact"]).dt.date
+    cal_day = pd.DataFrame(cal.groupby("date").size()).reset_index()
+    cal_day.columns = ["date","count"]
+    # Build weekday x weeknumber grid for a calendar-like view
+    cal_day["weekday"] = pd.to_datetime(cal_day["date"]).dt.weekday
+    cal_day["week"] = pd.to_datetime(cal_day["date"]).dt.isocalendar().week
 
-    # KPIs row 2
-    c1,c2,c3,c4 = st.columns(4)
+    c1, c2 = st.columns(2)
     with c1:
-        x = adf["decision_to_dispatch_min"].dropna()
-        st.markdown(f'<div class="kpi"><div class="label">Decision→Dispatch (median)</div><div class="value">{(median(x) if len(x)>0 else 0):.1f} min</div></div>', unsafe_allow_html=True)
-    with c2:
-        x = adf["dispatch_to_arrival_min"].dropna()
-        st.markdown(f'<div class="kpi"><div class="label">Dispatch→Arrival (median)</div><div class="value">{(median(x) if len(x)>0 else 0):.1f} min</div></div>', unsafe_allow_html=True)
-    with c3:
-        x = adf["arrival_to_handover_min"].dropna()
-        st.markdown(f'<div class="kpi"><div class="label">Arrival→Handover (median)</div><div class="value">{(median(x) if len(x)>0 else 0):.1f} min</div></div>', unsafe_allow_html=True)
-    with c4:
-        tri_counts = adf["triage"].value_counts(dropna=False).to_dict()
-        red_share = (100.0 * tri_counts.get("RED",0) / len(adf)) if len(adf) else 0
-        st.markdown(f'<div class="kpi"><div class="label">Critical Load (RED)</div><div class="value">{red_share:.0f}%</div></div>', unsafe_allow_html=True)
+        st.markdown("**Calendar Heatmap (cases/day)**")
+        cal_chart = alt.Chart(cal_day).mark_rect().encode(
+            x=alt.X('week:O', title='ISO Week'),
+            y=alt.Y('weekday:O', title='Weekday', sort=[0,1,2,3,4,5,6]),
+            color=alt.Color('count:Q', scale=alt.Scale(scheme='blues')),
+            tooltip=['date:T','count:Q']
+        ).properties(height=300)
+        st.altair_chart(cal_chart, use_container_width=True)
 
-    st.markdown('<hr class="soft" />', unsafe_allow_html=True)
-    arow1 = st.columns(2)
-    with arow1[0]:
-        st.markdown("**Triage Mix**")
+    with c2:
+        st.markdown("**Hourly Flow (first contact)**")
+        hourly = adf.copy()
+        hourly["hour"] = pd.to_datetime(hourly["first_contact"]).dt.hour
+        h = hourly.groupby("hour").size().reset_index(name="count")
+        hchart = alt.Chart(h).mark_bar().encode(
+            x=alt.X("hour:O", title="Hour"), y=alt.Y("count:Q", title="Referrals"),
+            tooltip=["hour","count"]
+        ).properties(height=300)
+        st.altair_chart(hchart, use_container_width=True)
+
+    row2 = st.columns(2)
+    with row2[0]:
+        st.markdown("**Triage Mix (pie)**")
         tri = adf.groupby("triage").size().reset_index(name="count")
         tri_chart = alt.Chart(tri).mark_arc(innerRadius=50).encode(
             theta="count:Q", color=alt.Color("triage:N", scale=alt.Scale(domain=["RED","YELLOW","GREEN"], range=["#ef4444","#f59e0b","#10b981"])),
@@ -411,8 +527,8 @@ else:
         ).properties(height=320)
         st.altair_chart(tri_chart, use_container_width=True)
 
-    with arow1[1]:
-        st.markdown("**Case Types**")
+    with row2[1]:
+        st.markdown("**Case Types (bar)**")
         ctypes = adf.groupby("case_type").size().reset_index(name="count").sort_values("count", ascending=False)
         case_chart = alt.Chart(ctypes).mark_bar().encode(
             x=alt.X("count:Q", title="Cases"), y=alt.Y("case_type:N", sort="-x", title=""),
@@ -420,20 +536,9 @@ else:
         ).properties(height=320)
         st.altair_chart(case_chart, use_container_width=True)
 
-    arow2 = st.columns(2)
-    with arow2[0]:
-        st.markdown("**Hourly Flow (first contact)**")
-        hourly = adf.copy()
-        hourly["hour"] = pd.to_datetime(hourly["first_contact"]).dt.hour
-        h = hourly.groupby("hour").size().reset_index(name="count")
-        hchart = alt.Chart(h).mark_bar().encode(
-            x=alt.X("hour:O", title="Hour of Day"), y=alt.Y("count:Q", title="Referrals"),
-            tooltip=["hour","count"]
-        ).properties(height=300)
-        st.altair_chart(hchart, use_container_width=True)
-
-    with arow2[1]:
-        st.markdown("**Transport Times by Ambulance Type**")
+    row3 = st.columns(2)
+    with row3[0]:
+        st.markdown("**Transport Times by Ambulance (boxplot)**")
         tdf = adf[~adf["dispatch_to_arrival_min"].isna()]
         if not tdf.empty:
             box = alt.Chart(tdf).mark_boxplot().encode(
@@ -442,20 +547,10 @@ else:
             ).properties(height=300)
             st.altair_chart(box, use_container_width=True)
         else:
-            st.caption("No complete dispatch→arrival intervals yet.")
+            st.caption("No completed dispatch→arrival intervals.")
 
-    arow3 = st.columns(2)
-    with arow3[0]:
-        st.markdown("**Status Snapshot**")
-        s = adf.groupby("status").size().reset_index(name="count")
-        s_chart = alt.Chart(s).mark_bar().encode(
-            x=alt.X("status:N", sort=["PREALERT","ACCEPTED","ENROUTE","ARRIVE_DEST","HANDOVER","REJECTED"]),
-            y="count:Q", tooltip=["status","count"]
-        ).properties(height=300)
-        st.altair_chart(s_chart, use_container_width=True)
-
-    with arow3[1]:
-        st.markdown("**Acceptance vs Rejection**")
+    with row3[1]:
+        st.markdown("**Acceptance vs Rejection (pie)**")
         accept_rej = pd.DataFrame({
             "Outcome":["Accepted/Progressed","Rejected"],
             "Count":[int(accept_base - rejected), int(rejected)]
@@ -466,28 +561,69 @@ else:
         ).properties(height=300)
         st.altair_chart(ar_chart, use_container_width=True)
 
-    # Raw table (today)
-    st.markdown("**Today’s Cases (table)**")
+    # SLAs + breach panel
+    st.markdown("**SLA Benchmarks & Breaches**")
+    sla_row = st.columns(4)
+    dd = adf["decision_to_dispatch_min"].dropna()
+    da = adf["dispatch_to_arrival_min"].dropna()
+    ah = adf["arrival_to_handover_min"].dropna()
+    with sla_row[0]:
+        st.markdown(f'<div class="kpi"><div class="label">Decision→Dispatch (median)</div><div class="value">{(median(dd) if len(dd)>0 else 0):.1f} min</div></div>', unsafe_allow_html=True)
+    with sla_row[1]:
+        st.markdown(f'<div class="kpi"><div class="label">Dispatch→Arrival (median)</div><div class="value">{(median(da) if len(da)>0 else 0):.1f} min</div></div>', unsafe_allow_html=True)
+    with sla_row[2]:
+        st.markdown(f'<div class="kpi"><div class="label">Arrival→Handover (median)</div><div class="value">{(median(ah) if len(ah)>0 else 0):.1f} min</div></div>', unsafe_allow_html=True)
+    with sla_row[3]:
+        red_share = (100.0 * (adf["triage"].eq("RED").sum()) / len(adf)) if len(adf) else 0
+        st.markdown(f'<div class="kpi"><div class="label">Critical Load (RED)</div><div class="value">{red_share:.0f}%</div></div>', unsafe_allow_html=True)
+
+    # Breach thresholds (tweakable)
+    b1, b2, b3 = st.columns(3)
+    thr_dd = b1.number_input("SLA: Decision→Dispatch (min)", min_value=1, max_value=120, value=15)
+    thr_da = b2.number_input("SLA: Dispatch→Arrival (min)", min_value=1, max_value=240, value=60)
+    thr_ah = b3.number_input("SLA: Arrival→Handover (min)", min_value=1, max_value=180, value=30)
+
+    def breach_df(df, col, thr):
+        if df.empty or col not in df: return pd.DataFrame()
+        x = df[[col, "id", "triage", "case_type", "priority"]].dropna()
+        return x[x[col] > thr].sort_values(col, ascending=False)
+
+    breaches = {
+        "Decision→Dispatch": breach_df(adf, "decision_to_dispatch_min", thr_dd),
+        "Dispatch→Arrival": breach_df(adf, "dispatch_to_arrival_min", thr_da),
+        "Arrival→Handover": breach_df(adf, "arrival_to_handover_min", thr_ah),
+    }
+    for label, bdf in breaches.items():
+        with st.expander(f"⚠️ Breaches – {label} ({len(bdf)})", expanded=False):
+            if len(bdf)==0:
+                st.caption("None")
+            else:
+                st.dataframe(bdf, use_container_width=True, height=220)
+
+    # ICU demand proxy
+    st.markdown("**ICU Demand vs Open Beds (proxy)**")
+    icu_demand = int(adf[(adf["triage"]=="RED") & adf["status"].isin(["ACCEPTED","ENROUTE","ARRIVE_DEST","HANDOVER"])].shape[0])
+    icu_open = int(st.session_state.facility_meta[facility]["ICU_open"])
+    idf = pd.DataFrame({"Metric":["ICU Demand (RED active)","ICU Open Beds"], "Value":[icu_demand, icu_open]})
+    bar = alt.Chart(idf).mark_bar().encode(x=alt.X("Metric:N", sort=None), y="Value:Q", color="Metric:N", tooltip=["Metric","Value"]).properties(height=300)
+    st.altair_chart(bar, use_container_width=True)
+
+    # Range table & export
+    st.markdown("**Referrals (range table)**")
     show_cols = ["id","status","triage","case_type","priority","ambulance","eta_min","first_contact"]
     st.dataframe(adf[show_cols].sort_values("first_contact", ascending=False), use_container_width=True, height=280)
 
 # -------------------- Exports --------------------
 st.subheader("Exports")
 colx1, colx2 = st.columns(2)
+if not adf.empty:
+    csv_bytes = adf.to_csv(index=False).encode("utf-8")
+    json_bytes = json.dumps(refs, indent=2).encode("utf-8")
+else:
+    csv_bytes = "".encode("utf-8")
+    json_bytes = "".encode("utf-8")
+
 with colx1:
-    if ref_all:
-        csv_bytes = pd.DataFrame([{
-            "id": r["id"], "status": r["status"],
-            "triage": r["triage"]["decision"]["color"], "case_type": r["triage"]["complaint"],
-            "priority": r["transport"].get("priority",""), "ambulance": r["transport"].get("ambulance",""),
-            "eta_min": r["transport"].get("eta_min",""),
-            "first_contact": fmt_ts(r["times"].get("first_contact_ts")), "decision": fmt_ts(r["times"].get("decision_ts")),
-            "dispatch": fmt_ts(r["times"].get("dispatch_ts")), "arrival": fmt_ts(r["times"].get("arrive_dest_ts")),
-            "handover": fmt_ts(r["times"].get("handover_ts")),
-        } for r in ref_all]).to_csv(index=False).encode("utf-8")
-    else:
-        csv_bytes = "".encode("utf-8")
-    st.download_button("⬇️ Download CSV (today @ facility)", data=csv_bytes, file_name="receiving_today.csv", mime="text/csv", disabled=(len(ref_all)==0))
+    st.download_button("⬇️ Download CSV (range @ facility)", data=csv_bytes, file_name="receiving_range.csv", mime="text/csv", disabled=(len(adf)==0))
 with colx2:
-    json_bytes = json.dumps(ref_all, indent=2).encode("utf-8") if ref_all else "".encode("utf-8")
-    st.download_button("⬇️ Download JSON (today @ facility)", data=json_bytes, file_name="receiving_today.json", mime="application/json", disabled=(len(ref_all)==0))
+    st.download_button("⬇️ Download JSON (range @ facility)", data=json_bytes, file_name="receiving_range.json", mime="application/json", disabled=(len(refs)==0))
