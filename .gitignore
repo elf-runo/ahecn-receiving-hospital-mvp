@@ -1,0 +1,20 @@
+# Byte-compiled / cache
+__pycache__/
+*.py[cod]
+*.egg-info
+*.egg
+*.pyo
+
+# Environments
+.venv/
+venv/
+env/
+.venv*/
+venv*/
+env*/
+
+# OS
+.DS_Store
+
+# Streamlit
+.streamlit/secrets.toml
