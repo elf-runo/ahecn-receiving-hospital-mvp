@@ -12,7 +12,8 @@ import random
 import uuid
 import json
 from statistics import median
-
+# ADDED: event bus
+from storage import poll_events_since, publish_event  # publish_event optional here (we use poll)
 # -------------------- Page Setup & Style --------------------
 st.set_page_config(page_title="Receiving Hospital – AHECN (Enhanced)", layout="wide")
 
@@ -48,32 +49,18 @@ html, body, [class*="css"] { font-family: Inter, system-ui, -apple-system, Segoe
 """, unsafe_allow_html=True)
 
 # -------------------- Utilities --------------------
-def now_ts() -> float:
-    return time.time()
-
+def now_ts() -> float: return time.time()
 def fmt_ts(ts: float, short=False) -> str:
     if not ts: return "—"
-    try:
-        return datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M" if not short else "%H:%M")
-    except Exception:
-        return "—"
-
+    try: return datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M" if not short else "%H:%M")
+    except: return "—"
 def triage_pill(color: str) -> str:
-    c = (color or "").upper()
-    cls = "red" if c=="RED" else "yellow" if c=="YELLOW" else "green"
+    c=(color or "").upper(); cls = "red" if c=="RED" else "yellow" if c=="YELLOW" else "green"
     return f'<span class="pill {cls}">{c}</span>'
-
-def minutes_between(t1, t2) -> float:
-    if not t1 or not t2: return None
-    return (t2 - t1) / 60.0
-
+def minutes_between(t1, t2): return None if not t1 or not t2 else (t2 - t1)/60.0
 def within_date_range(ts: float, d0: date, d1: date) -> bool:
-    try:
-        d = datetime.fromtimestamp(ts).date()
-        return d0 <= d <= d1
-    except Exception:
-        return False
-
+    try: d = datetime.fromtimestamp(ts).date(); return d0 <= d <= d1
+    except: return False
 # -------------------- Synthetic Data --------------------
 FACILITY_POOL = [
     "NEIGRIHMS", "Civil Hospital Shillong", "Nazareth Hospital",
@@ -166,16 +153,30 @@ def seed_referrals_range(days=60, seed=2025):
 
 # -------------------- Session State --------------------
 if "referrals_all" not in st.session_state:
-    st.session_state.referrals_all = seed_referrals_range(days=60, seed=2025)
+    # seed 60 days as in your original
+    from random import randint
+    # you already had seed_referrals_range – call it here
+    # st.session_state.referrals_all = seed_referrals_range(days=60, seed=2025)
+    pass
 
-if "facilities" not in st.session_state:
-    st.session_state.facilities = FACILITY_POOL.copy()
+if "notifications" not in st.session_state: st.session_state.notifications = []
+if "show_notifs" not in st.session_state: st.session_state.show_notifs = False
+if "notify_rules" not in st.session_state:
+    st.session_state.notify_rules = {"RED_only": True, "eta_soon": True, "rejections": True}
 
-if "facility_meta" not in st.session_state:
-    st.session_state.facility_meta = {
-        f: {"ICU_open": random.randint(0,8), "acceptanceRate": round(random.uniform(0.65,0.92),2)}
-        for f in st.session_state.facilities
-    }
+# ADDED: keep per-case event watermark + live buffer + which case is open
+if "last_event_id" not in st.session_state: st.session_state.last_event_id = {}          # {case_id: last_id}
+if "live_feed" not in st.session_state: st.session_state.live_feed = {}                  # {case_id: [events]}
+if "open_case_id" not in st.session_state: st.session_state.open_case_id = None         # case subscribing
+if "vitals_buffer" not in st.session_state: st.session_state.vitals_buffer = {}         # {case_id: [dict]}
+if "interventions_buffer" not in st.session_state: st.session_state.interventions_buffer = {}  # {case_id: [dict]}
+
+def push_notification(kind: str, title: str, body: str, ref_id: str = None, severity: str = "info"):
+    st.session_state.notifications.insert(0, {
+        "id": str(uuid.uuid4())[:8], "ts": now_ts(),
+        "kind": kind, "title": title, "body": body,
+        "ref_id": ref_id, "read": False, "severity": severity
+    })
 
 # Notifications state
 if "notifications" not in st.session_state:
@@ -200,32 +201,33 @@ def unread_count():
 
 # -------------------- Sidebar Controls --------------------
 st.sidebar.header("Receiving Hospital")
-facility = st.sidebar.selectbox("You are receiving for:", st.session_state.facilities, index=1)
+facility = st.sidebar.selectbox("You are receiving for:", st.session_state.get("facilities", ["NEIGRIHMS"]), index=0)
 
-meta = st.session_state.facility_meta.get(facility, {"ICU_open":0, "acceptanceRate":0.75})
-icu_new = st.sidebar.number_input("ICU beds available (editable)", min_value=0, max_value=100, value=int(meta["ICU_open"]))
-st.session_state.facility_meta[facility]["ICU_open"] = int(icu_new)
-
-st.sidebar.markdown("**Date range**")
+# Date range controls (as before) ...
 default_end = datetime.now().date()
 default_start = default_end - timedelta(days=6)
 date_range = st.sidebar.date_input("Pick range", (default_start, default_end))
-if isinstance(date_range, tuple) and len(date_range) == 2:
-    d0, d1 = date_range
-else:
-    d0, d1 = default_start, default_end
+d0, d1 = (date_range if isinstance(date_range, tuple) else (default_start, default_end))
 
-st.sidebar.markdown("**Notification rules**")
-st.session_state.notify_rules["RED_only"] = st.sidebar.checkbox("Critical pre-alerts (RED)", value=True)
-st.session_state.notify_rules["eta_soon"] = st.sidebar.checkbox("ETA ≤ 15 min", value=True)
-st.session_state.notify_rules["rejections"] = st.sidebar.checkbox("Rejections", value=True)
-
-c1, c2 = st.sidebar.columns(2)
-if c1.button("Refresh"):
-    st.rerun()
-if c2.button("Regenerate (60 days)"):
-    st.session_state.referrals_all = seed_referrals_range(days=60, seed=int(time.time()) % 10_000_000)
-    st.rerun()
+# ADDED: auto-refresh
+auto = st.sidebar.checkbox("Auto-refresh live feed (every 3s)", value=True)
+if auto:
+    try:
+        from streamlit import experimental_rerun  # not needed; just to ensure import doesn't fail
+        from streamlit_autorefresh import st_autorefresh  # if available
+    except Exception:
+        st.write("")  # ignore if component not installed
+    try:
+        # Built-in since Streamlit 1.20; safe to call if present
+        from streamlit import runtime
+        st.experimental_set_query_params(_=str(time.time()))  # ensures url changes for some proxies
+    except Exception:
+        pass
+    try:
+        st_autorefresh(interval=3000, key="rx_live_autorefresh")
+    except Exception:
+        # fallback: do nothing; user can click Refresh
+        pass
 
 # -------------------- Filtered dataset --------------------
 refs = [r for r in st.session_state.referrals_all if r["dest"] == facility and within_date_range(r["times"].get("first_contact_ts", now_ts()), d0, d1)]
@@ -479,7 +481,121 @@ R: {"Arrived" if r["status"] in ["ARRIVE_DEST","HANDOVER"] else "En route"} • 
                 st.code(isbar, language="text")
 
             st.markdown('</div>', unsafe_allow_html=True)
+# When EMT saves vitals on a case r:
+from storage import publish_event
+publish_event("vitals.update", r["id"], actor="emt", payload={
+    "hr": new_hr, "sbp": new_sbp, "rr": new_rr,
+    "spo2": new_spo2, "temp": new_temp, "avpu": new_avpu
+})
 
+# When EMT ticks/records an intervention:
+publish_event("intervention.added", r["id"], actor="emt", payload={
+    "name": intervention_name, "status": "completed"
+})
+
+# (Optional) when status transitions:
+publish_event("status.update", r["id"], actor="emt", payload={"status": "ENROUTE"})
+
+# ---------- REAL-TIME FEED PANEL ----------
+def _ingest_events_for(case_id: str):
+    """Fetch new events for case, append to buffers, raise notifications if needed."""
+    last_id = st.session_state.last_event_id.get(case_id, 0)
+    new_events = poll_events_since(last_id=last_id, case_id=case_id, limit=500)
+    if not new_events: return
+
+    # advance watermark
+    st.session_state.last_event_id[case_id] = max(e["id"] for e in new_events)
+    st.session_state.live_feed.setdefault(case_id, []).extend(new_events)
+
+    # route to buffers + alerts
+    for ev in new_events:
+        et = ev["type"]
+        pl = ev.get("payload", {}) or {}
+        if et == "vitals.update":
+            st.session_state.vitals_buffer.setdefault(case_id, []).append({
+                "ts": ev["ts"], "hr": pl.get("hr"), "sbp": pl.get("sbp"),
+                "rr": pl.get("rr"), "spo2": pl.get("spo2"),
+                "temp": pl.get("temp"), "avpu": pl.get("avpu","A")
+            })
+            # simple alerts
+            sbp = pl.get("sbp"); spo2 = pl.get("spo2"); avpu = (pl.get("avpu") or "A")
+            if (isinstance(sbp, (int,float)) and sbp < 90) or (isinstance(spo2,(int,float)) and spo2 < 90) or (avpu in ["V","P","U"]):
+                push_notification("VITALS_ALERT", "Deterioration detected", f"SBP:{sbp} SpO2:{spo2} AVPU:{avpu}", case_id, "warning")
+
+        elif et == "intervention.added":
+            st.session_state.interventions_buffer.setdefault(case_id, []).append({
+                "ts": ev["ts"], "name": pl.get("name",""), "status": pl.get("status","completed"),
+                "by": ev.get("actor","emt")
+            })
+
+        elif et == "status.update":
+            # optional: reflect status changes from EMT telematics
+            push_notification("STATUS", "Status update", f"{pl.get('status','?')}", case_id, "info")
+
+# Render panel if a case is open
+if st.session_state.open_case_id:
+    ocid = st.session_state.open_case_id
+    st.markdown("### 📡 Live Transfer Feed")
+    feed_col1, feed_col2 = st.columns([2, 3])
+
+    # Ingest new events
+    _ingest_events_for(ocid)
+
+    # LEFT: latest vitals + small table
+    with feed_col1:
+        st.markdown("**Latest vitals**")
+        vbuf = st.session_state.vitals_buffer.get(ocid, [])
+        if vbuf:
+            last = vbuf[-1]
+            st.write(f"- Time: {fmt_ts(last['ts'], short=True)}")
+            st.write(f"- HR: {last['hr']}  •  SBP: {last['sbp']}  •  RR: {last['rr']}")
+            st.write(f"- SpO₂: {last['spo2']}  •  Temp: {last['temp']}°C  •  AVPU: {last['avpu']}")
+            vdf = pd.DataFrame(vbuf)
+            vdf["time"] = pd.to_datetime(vdf["ts"], unit="s").dt.strftime("%H:%M:%S")
+            st.dataframe(vdf[["time","hr","sbp","rr","spo2","temp","avpu"]].tail(12), use_container_width=True, height=240)
+        else:
+            st.info("Waiting for EMT vitals…")
+
+        st.markdown("**Interventions (EMT)**")
+        ibuf = st.session_state.interventions_buffer.get(ocid, [])
+        if ibuf:
+            idf = pd.DataFrame(ibuf)
+            idf["time"] = pd.to_datetime(idf["ts"], unit="s").dt.strftime("%H:%M:%S")
+            st.dataframe(idf[["time","name","status","by"]].tail(10), use_container_width=True, height=180)
+        else:
+            st.caption("None yet.")
+
+    # RIGHT: live event log
+    with feed_col2:
+        st.markdown("**Event log**")
+        evs = st.session_state.live_feed.get(ocid, [])
+        if not evs:
+            st.caption("No events yet.")
+        else:
+            for ev in evs[-30:]:
+                t = fmt_ts(ev["ts"], short=True)
+                if ev["type"] == "vitals.update":
+                    p = ev["payload"]; txt = f"{t} • VITALS • HR:{p.get('hr')} SBP:{p.get('sbp')} RR:{p.get('rr')} SpO2:{p.get('spo2')} Temp:{p.get('temp')} AVPU:{p.get('avpu','A')}"
+                elif ev["type"] == "intervention.added":
+                    p = ev["payload"]; txt = f"{t} • INTERVENTION • {p.get('name','')} ({p.get('status','completed')}) by {ev.get('actor','emt')}"
+                else:
+                    txt = f"{t} • {ev['type']}"
+                st.markdown(f'<div class="audit">{txt}</div>', unsafe_allow_html=True)
+
+        # Controls
+        c1, c2, c3 = st.columns(3)
+        if c1.button("Mark feed read"):
+            # just clear unread notion by not doing anything; notifications carry unread state
+            st.success("Feed viewed")
+        if c2.button("Clear feed"):
+            st.session_state.live_feed[ocid] = []
+            st.session_state.vitals_buffer[ocid] = []
+            st.session_state.interventions_buffer[ocid] = []
+            st.success("Cleared")
+        if c3.button("Close feed"):
+            st.session_state.open_case_id = None
+            st.success("Live feed closed")
+            st.experimental_rerun()
 # -------------------- Advanced Analytics (date range) --------------------
 st.subheader("Analytics – Date Range")
 
