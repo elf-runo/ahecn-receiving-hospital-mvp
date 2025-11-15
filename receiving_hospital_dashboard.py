@@ -13,7 +13,13 @@ import uuid
 import json
 from statistics import median
 # ADDED: event bus
-from storage import poll_events_since, publish_event  # publish_event optional here (we use poll)
+try:
+    from storage import poll_events_since, publish_event  # publish_event optional here (we use poll)
+except ImportError:
+    # Fallback if storage module is not available
+    def poll_events_since(*args, **kwargs): return []
+    def publish_event(*args, **kwargs): return None
+
 # -------------------- Page Setup & Style --------------------
 st.set_page_config(page_title="Receiving Hospital – AHECN (Enhanced)", layout="wide")
 
@@ -61,6 +67,7 @@ def minutes_between(t1, t2): return None if not t1 or not t2 else (t2 - t1)/60.0
 def within_date_range(ts: float, d0: date, d1: date) -> bool:
     try: d = datetime.fromtimestamp(ts).date(); return d0 <= d <= d1
     except: return False
+
 # -------------------- Synthetic Data --------------------
 FACILITY_POOL = [
     "NEIGRIHMS", "Civil Hospital Shillong", "Nazareth Hospital",
@@ -153,40 +160,35 @@ def seed_referrals_range(days=60, seed=2025):
 
 # -------------------- Session State --------------------
 if "referrals_all" not in st.session_state:
-    # seed 60 days as in your original
-    from random import randint
-    # you already had seed_referrals_range – call it here
-    # st.session_state.referrals_all = seed_referrals_range(days=60, seed=2025)
-    pass
+    st.session_state.referrals_all = seed_referrals_range(days=60, seed=2025)
 
-if "notifications" not in st.session_state: st.session_state.notifications = []
-if "show_notifs" not in st.session_state: st.session_state.show_notifs = False
+if "facilities" not in st.session_state:
+    st.session_state.facilities = FACILITY_POOL
+
+if "facility_meta" not in st.session_state:
+    # Initialize ICU bed counts for each facility
+    st.session_state.facility_meta = {}
+    for facility in FACILITY_POOL:
+        st.session_state.facility_meta[facility] = {"ICU_open": random.randint(5, 20)}
+
+if "notifications" not in st.session_state: 
+    st.session_state.notifications = []
+if "show_notifs" not in st.session_state: 
+    st.session_state.show_notifs = False
 if "notify_rules" not in st.session_state:
     st.session_state.notify_rules = {"RED_only": True, "eta_soon": True, "rejections": True}
 
 # ADDED: keep per-case event watermark + live buffer + which case is open
-if "last_event_id" not in st.session_state: st.session_state.last_event_id = {}          # {case_id: last_id}
-if "live_feed" not in st.session_state: st.session_state.live_feed = {}                  # {case_id: [events]}
-if "open_case_id" not in st.session_state: st.session_state.open_case_id = None         # case subscribing
-if "vitals_buffer" not in st.session_state: st.session_state.vitals_buffer = {}         # {case_id: [dict]}
-if "interventions_buffer" not in st.session_state: st.session_state.interventions_buffer = {}  # {case_id: [dict]}
-
-def push_notification(kind: str, title: str, body: str, ref_id: str = None, severity: str = "info"):
-    st.session_state.notifications.insert(0, {
-        "id": str(uuid.uuid4())[:8], "ts": now_ts(),
-        "kind": kind, "title": title, "body": body,
-        "ref_id": ref_id, "read": False, "severity": severity
-    })
-
-# Notifications state
-if "notifications" not in st.session_state:
-    st.session_state.notifications = []  # list of {id, ts, kind, title, body, ref_id, read, severity}
-
-if "show_notifs" not in st.session_state:
-    st.session_state.show_notifs = False
-
-if "notify_rules" not in st.session_state:
-    st.session_state.notify_rules = {"RED_only": True, "eta_soon": True, "rejections": True}
+if "last_event_id" not in st.session_state: 
+    st.session_state.last_event_id = {}          # {case_id: last_id}
+if "live_feed" not in st.session_state: 
+    st.session_state.live_feed = {}                  # {case_id: [events]}
+if "open_case_id" not in st.session_state: 
+    st.session_state.open_case_id = None         # case subscribing
+if "vitals_buffer" not in st.session_state: 
+    st.session_state.vitals_buffer = {}         # {case_id: [dict]}
+if "interventions_buffer" not in st.session_state: 
+    st.session_state.interventions_buffer = {}  # {case_id: [dict]}
 
 def push_notification(kind: str, title: str, body: str, ref_id: str = None, severity: str = "info"):
     st.session_state.notifications.insert(0, {
@@ -203,31 +205,29 @@ def unread_count():
 st.sidebar.header("Receiving Hospital")
 facility = st.sidebar.selectbox("You are receiving for:", st.session_state.get("facilities", ["NEIGRIHMS"]), index=0)
 
-# Date range controls (as before) ...
+# Date range controls
 default_end = datetime.now().date()
 default_start = default_end - timedelta(days=6)
 date_range = st.sidebar.date_input("Pick range", (default_start, default_end))
-d0, d1 = (date_range if isinstance(date_range, tuple) else (default_start, default_end))
+if isinstance(date_range, tuple) and len(date_range) == 2:
+    d0, d1 = date_range
+else:
+    d0, d1 = default_start, default_end
+
+# Notification rules
+st.sidebar.subheader("Notification Rules")
+st.session_state.notify_rules["RED_only"] = st.sidebar.checkbox("RED triage alerts", value=True)
+st.session_state.notify_rules["eta_soon"] = st.sidebar.checkbox("ETA <15min alerts", value=True)
+st.session_state.notify_rules["rejections"] = st.sidebar.checkbox("Rejection alerts", value=True)
 
 # ADDED: auto-refresh
 auto = st.sidebar.checkbox("Auto-refresh live feed (every 3s)", value=True)
 if auto:
     try:
-        from streamlit import experimental_rerun  # not needed; just to ensure import doesn't fail
-        from streamlit_autorefresh import st_autorefresh  # if available
-    except Exception:
-        st.write("")  # ignore if component not installed
-    try:
-        # Built-in since Streamlit 1.20; safe to call if present
-        from streamlit import runtime
-        st.experimental_set_query_params(_=str(time.time()))  # ensures url changes for some proxies
-    except Exception:
-        pass
-    try:
+        from streamlit_autorefresh import st_autorefresh
         st_autorefresh(interval=3000, key="rx_live_autorefresh")
-    except Exception:
-        # fallback: do nothing; user can click Refresh
-        pass
+    except ImportError:
+        st.sidebar.warning("Auto-refresh requires streamlit-autorefresh package")
 
 # -------------------- Filtered dataset --------------------
 refs = [r for r in st.session_state.referrals_all if r["dest"] == facility and within_date_range(r["times"].get("first_contact_ts", now_ts()), d0, d1)]
@@ -249,9 +249,11 @@ if st.session_state.show_notifs:
         if st.button("Mark all read"):
             for n in st.session_state.notifications:
                 n["read"] = True
+            st.rerun()
     with colN2:
         if st.button("Clear all"):
             st.session_state.notifications = []
+            st.rerun()
     with colN3:
         st.caption("System generates notifications on accepted RED cases, ETA soon, and rejections (configurable in sidebar).")
 
@@ -312,13 +314,16 @@ accept_rate = (100.0 * (accept_base - rejected) / accept_base) if accept_base el
 eta_vals = adf.loc[adf["status"].isin(["ENROUTE","ARRIVE_DEST"]) & adf["eta_min"].notna(), "eta_min"].tolist()
 avg_eta = round(sum(eta_vals)/len(eta_vals),1) if eta_vals else 0.0
 
+# Get ICU beds for current facility
+icu_open = st.session_state.facility_meta[facility]["ICU_open"]
+
 k1,k2,k3,k4,k5,k6 = st.columns(6)
 with k1: st.markdown(f'<div class="kpi"><div class="label">Referrals (range)</div><div class="value">{total}</div></div>', unsafe_allow_html=True)
 with k2: st.markdown(f'<div class="kpi"><div class="label">Awaiting/Active</div><div class="value">{awaiting}</div></div>', unsafe_allow_html=True)
 with k3: st.markdown(f'<div class="kpi"><div class="label">En Route</div><div class="value">{enroute}</div></div>', unsafe_allow_html=True)
 with k4: st.markdown(f'<div class="kpi"><div class="label">Arrived</div><div class="value">{arrived}</div></div>', unsafe_allow_html=True)
 with k5: st.markdown(f'<div class="kpi"><div class="label">Acceptance Rate</div><div class="value">{accept_rate:.0f}%</div></div>', unsafe_allow_html=True)
-with k6: st.markdown(f'<div class="kpi"><div class="label">ICU Beds Open</div><div class="value">{int(icu_new)}</div></div>', unsafe_allow_html=True)
+with k6: st.markdown(f'<div class="kpi"><div class="label">ICU Beds Open</div><div class="value">{icu_open}</div></div>', unsafe_allow_html=True)
 
 st.markdown('<hr class="soft" />', unsafe_allow_html=True)
 
@@ -369,6 +374,12 @@ else:
                 st.markdown(f"**{r['patient']['name']}**, {r['patient']['age']} {r['patient']['sex']} {tri_html}", unsafe_allow_html=True)
                 st.caption(f"From **{r['referrer']['facility']}** (by {r['referrer']['name']} – {r['referrer']['role']})")
                 st.caption(f"Dx: {r['provisionalDx'].get('label','—')}")
+                
+                # ADDED: Button to open live feed for this case
+                if st.button("📡 Open Live Feed", key=f"live_{r['id']}"):
+                    st.session_state.open_case_id = r["id"]
+                    st.rerun()
+                    
             with header_r:
                 st.write(f"**Status:** {r['status']}")
                 eta_txt = r['transport'].get('eta_min', '—')
@@ -456,7 +467,8 @@ else:
                 v_avpu = colv6.selectbox("AVPU", ["A", "V", "P", "U"], index=0, key=f"vavpu_{r['id']}")
 
                 if st.button("➕ Add vitals", key=f"addv_{r['id']}"):
-                    if "vitals_history" not in r: r["vitals_history"] = []
+                    if "vitals_history" not in r: 
+                        r["vitals_history"] = []
                     r["vitals_history"].append({
                         "timestamp": now_ts(), "hr": v_hr, "sbp": v_sbp, "rr": v_rr,
                         "spo2": v_spo2, "temp": v_temp, "avpu": v_avpu
@@ -481,27 +493,14 @@ R: {"Arrived" if r["status"] in ["ARRIVE_DEST","HANDOVER"] else "En route"} • 
                 st.code(isbar, language="text")
 
             st.markdown('</div>', unsafe_allow_html=True)
-# When EMT saves vitals on a case r:
-from storage import publish_event
-publish_event("vitals.update", r["id"], actor="emt", payload={
-    "hr": new_hr, "sbp": new_sbp, "rr": new_rr,
-    "spo2": new_spo2, "temp": new_temp, "avpu": new_avpu
-})
-
-# When EMT ticks/records an intervention:
-publish_event("intervention.added", r["id"], actor="emt", payload={
-    "name": intervention_name, "status": "completed"
-})
-
-# (Optional) when status transitions:
-publish_event("status.update", r["id"], actor="emt", payload={"status": "ENROUTE"})
 
 # ---------- REAL-TIME FEED PANEL ----------
 def _ingest_events_for(case_id: str):
     """Fetch new events for case, append to buffers, raise notifications if needed."""
     last_id = st.session_state.last_event_id.get(case_id, 0)
     new_events = poll_events_since(last_id=last_id, case_id=case_id, limit=500)
-    if not new_events: return
+    if not new_events: 
+        return
 
     # advance watermark
     st.session_state.last_event_id[case_id] = max(e["id"] for e in new_events)
@@ -595,7 +594,8 @@ if st.session_state.open_case_id:
         if c3.button("Close feed"):
             st.session_state.open_case_id = None
             st.success("Live feed closed")
-            st.experimental_rerun()
+            st.rerun()
+
 # -------------------- Advanced Analytics (date range) --------------------
 st.subheader("Analytics – Date Range")
 
