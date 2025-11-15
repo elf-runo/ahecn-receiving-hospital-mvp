@@ -480,14 +480,15 @@ st.session_state.notify_rules["RED_only"] = st.sidebar.checkbox("RED triage aler
 st.session_state.notify_rules["eta_soon"] = st.sidebar.checkbox("ETA <15min alerts", value=True)
 st.session_state.notify_rules["rejections"] = st.sidebar.checkbox("Rejection alerts", value=True)
 
-# ADDED: auto-refresh
-auto = st.sidebar.checkbox("Auto-refresh live feed (every 3s)", value=True)
-if auto:
+# ADDED: auto-refresh - store in session state
+st.session_state.auto_refresh = st.sidebar.checkbox("Auto-refresh live feed (every 3s)", value=True)
+if st.session_state.auto_refresh:
     try:
         from streamlit_autorefresh import st_autorefresh
         st_autorefresh(interval=3000, key="rx_live_autorefresh")
     except ImportError:
         st.sidebar.warning("Auto-refresh requires streamlit-autorefresh package")
+
 # Debug utilities in sidebar
 st.sidebar.markdown("---")
 DEBUG = st.sidebar.checkbox("🔧 Debug Mode", value=False)
@@ -506,6 +507,41 @@ if DEBUG:
     if st.sidebar.button("Generate Test Alert"):
         push_notification("TEST", "Test Notification", "This is a test notification", "TEST-001", "info")
         st.sidebar.success("Test notification sent")
+# -------------------- Enhanced Real-time Features --------------------
+def setup_real_time_listener():
+    """Set up real-time event listening"""
+    if "last_poll_time" not in st.session_state:
+        st.session_state.last_poll_time = now_ts()
+    
+    # Get auto-refresh setting from session state or sidebar
+    auto_refresh = st.session_state.get('auto_refresh', False)
+    
+    # Poll for new events every 5 seconds if auto-refresh is enabled
+    if auto_refresh and (now_ts() - st.session_state.last_poll_time > 5):
+        check_for_new_events()
+        st.session_state.last_poll_time = now_ts()
+
+def check_for_new_events():
+    """Check for new system-wide events"""
+    try:
+        new_events = poll_events_since(st.session_state.get("system_last_event_id", 0))
+        if new_events:
+            st.session_state.system_last_event_id = max(e["id"] for e in new_events)
+            for event in new_events:
+                handle_system_event(event)
+    except Exception as e:
+        # Silently fail for now to avoid breaking the app
+        pass
+
+def handle_system_event(event):
+    """Handle system-wide events"""
+    event_type = event.get("type", "")
+    case_id = event.get("case_id", "")
+    
+    if event_type == "system.alert":
+        push_notification("SYSTEM_ALERT", event.get("title", "System Alert"), 
+                         event.get("message", ""), case_id, "warning")
+
 # Setup real-time listener in main flow
 setup_real_time_listener()        
 # -------------------- Filtered dataset --------------------
