@@ -12,7 +12,26 @@ import random
 import uuid
 import json
 from statistics import median
-# Configuration Management
+# ADDED: event bus
+try:
+    from storage import poll_events_since, publish_event  # publish_event optional here (we use poll)
+except ImportError:
+    # Fallback if storage module is not available
+    def poll_events_since(*args, **kwargs): return []
+    def publish_event(*args, **kwargs): return None
+
+# -------------------- Constants (MOVE THIS SECTION UP) --------------------
+FACILITY_POOL = [
+    "NEIGRIHMS", "Civil Hospital Shillong", "Nazareth Hospital",
+    "Ganesh Das MCH", "Sohra Civil Hospital", "Shillong Polyclinic & Trauma"
+]
+COMPLAINTS = ["Maternal", "Trauma", "Stroke", "Cardiac", "Sepsis", "Other"]
+AMB_TYPES = ["BLS", "ALS", "ALS + Vent", "Neonatal", "Other"]
+PRIORITY = ["Routine", "Urgent", "STAT"]
+TRIAGE = ["RED", "YELLOW", "GREEN"]
+REJECT_REASONS = ["No ICU bed", "No specialist", "Equipment down", "Over capacity", "Outside scope", "Patient diverted"]
+
+# -------------------- Configuration Management (NOW THIS CAN USE FACILITY_POOL) --------------------
 CONFIG = {
     "facilities": FACILITY_POOL,
     "sla_thresholds": {
@@ -43,6 +62,7 @@ def load_config_from_yaml():
 # Uncomment to use YAML config:
 # CONFIG = load_config_from_yaml()
 
+# -------------------- Authentication --------------------
 # Simple authentication (replace with proper auth in production)
 def check_authentication():
     """Simple authentication check - extend for production"""
@@ -77,13 +97,6 @@ def show_login_screen():
 # Check authentication at app start
 check_authentication()
 
-# ADDED: event bus
-try:
-    from storage import poll_events_since, publish_event  # publish_event optional here (we use poll)
-except ImportError:
-    # Fallback if storage module is not available
-    def poll_events_since(*args, **kwargs): return []
-    def publish_event(*args, **kwargs): return None
 
 # -------------------- Page Setup & Style --------------------
 st.set_page_config(page_title="Receiving Hospital – AHECN (Enhanced)", layout="wide")
