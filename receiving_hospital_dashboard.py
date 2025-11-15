@@ -12,6 +12,71 @@ import random
 import uuid
 import json
 from statistics import median
+# Configuration Management
+CONFIG = {
+    "facilities": FACILITY_POOL,
+    "sla_thresholds": {
+        "decision_to_dispatch": 15,
+        "dispatch_to_arrival": 60, 
+        "arrival_to_handover": 30
+    },
+    "notifications": {
+        "red_triage": True,
+        "eta_alert": 15,
+        "vitals_alert": True
+    },
+    "auto_refresh_interval": 5
+}
+
+# Load from YAML if available (future enhancement)
+def load_config_from_yaml():
+    """Load configuration from YAML file - placeholder for future"""
+    try:
+        import yaml
+        with open("config.yaml", "r") as f:
+            return yaml.safe_load(f)
+    except ImportError:
+        return CONFIG
+    except FileNotFoundError:
+        return CONFIG
+
+# Uncomment to use YAML config:
+# CONFIG = load_config_from_yaml()
+
+# Simple authentication (replace with proper auth in production)
+def check_authentication():
+    """Simple authentication check - extend for production"""
+    if "authenticated" not in st.session_state:
+        st.session_state.authenticated = False
+    
+    if not st.session_state.authenticated:
+        show_login_screen()
+        st.stop()
+
+def show_login_screen():
+    """Display login form"""
+    st.title("🏥 AHECN Receiving Hospital Dashboard")
+    st.markdown("---")
+    
+    with st.form("login_form"):
+        col1, col2 = st.columns(2)
+        username = col1.text_input("Username", placeholder="Enter your username")
+        password = col2.text_input("Password", type="password", placeholder="Enter your password")
+        role = st.selectbox("Role", ["Receiving Doctor", "Nurse", "Administrator", "EMT Coordinator"])
+        
+        if st.form_submit_button("🔐 Login"):
+            # Simple demo authentication - replace with real auth
+            if username and password:
+                st.session_state.authenticated = True
+                st.session_state.user_role = role
+                st.session_state.username = username
+                st.rerun()
+            else:
+                st.error("Please enter both username and password")
+
+# Check authentication at app start
+check_authentication()
+
 # ADDED: event bus
 try:
     from storage import poll_events_since, publish_event  # publish_event optional here (we use poll)
@@ -28,32 +93,154 @@ st.markdown("""
 :root{
   --ok:#10b981; --warn:#f59e0b; --bad:#ef4444; --muted:#94a3b8; --card:#0f172a; --ink:#e2e8f0;
 }
-html, body, [class*="css"] { font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial; }
-.block-container{ padding-top:1rem; padding-bottom:2.5rem }
-.card{ background:var(--card); border:1px solid #1f2937; border-radius:14px; padding:14px 16px; margin-bottom:12px; }
-.kpi{ background:#0b1324; border:1px solid #1f2937; border-radius:12px; padding:12px 14px; }
-.kpi .label{ color:var(--muted); font-size:.8rem; letter-spacing:.2px }
-.kpi .value{ font-weight:700; font-size:1.4rem; color:var(--ink) }
-.pill{ display:inline-flex; align-items:center; padding:.28rem .6rem; border-radius:999px; font-weight:700; font-size:.75rem; letter-spacing:.3px; margin-right:.35rem; }
-.pill.red{ background:rgba(239,68,68,.15); color:#fecaca; border:1px solid rgba(239,68,68,.35)}
-.pill.yellow{ background:rgba(245,158,11,.15); color:#fde68a; border:1px solid rgba(245,158,11,.35)}
-.pill.green{ background:rgba(16,185,129,.15); color:#a7f3d0; border:1px solid rgba(16,185,129,.35)}
-.badge{ display:inline-block; padding:.25rem .5rem; border-radius:8px; font-size:.72rem; color:#cbd5e1; background:#1f2937; margin-right:.35rem }
-.soft{ border:none; height:1px; background:#1f2937; margin:8px 0 12px }
-.small{ color:#94a3b8; font-size:.85rem }
-.btnline > div > button{ width:100% }
-.audit{ background:#1e293b; border-left:3px solid #8b5cf6; padding:6px 10px; border-radius:6px; margin:4px 0 }
-.ntf{ background:#111827; border:1px solid #1f2937; border-radius:10px; padding:8px 10px; margin:6px 0 }
-.ntf.unread{ border-color:#3b82f6 }
-.ntf .title{ font-weight:700; }
-.ntf .meta{ color:#94a3b8; font-size:.78rem }
-.headerbar{ display:flex; align-items:center; gap:.75rem; justify-content:space-between; }
-.headerbar .left{ display:flex; align-items:center; gap:.75rem }
-.headerbar .right{ display:flex; align-items:center; gap:.5rem }
-.bell{ font-weight:700; }
+
+/* Fix main container alignment */
+.main .block-container {
+  padding-top: 1rem;
+  padding-bottom: 2.5rem;
+  max-width: 100%;
+}
+
+/* Fix header alignment */
+.headerbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  margin-bottom: 1.5rem;
+}
+
+.headerbar .left, .headerbar .right {
+  display: flex;
+  align-items: center;
+}
+
+/* Fix card content alignment */
+.card {
+  background: var(--card);
+  border: 1px solid #1f2937;
+  border-radius: 14px;
+  padding: 16px 18px;
+  margin-bottom: 16px;
+}
+
+/* Fix KPI alignment */
+.kpi {
+  background: #0b1324;
+  border: 1px solid #1f2937;
+  border-radius: 12px;
+  padding: 14px 16px;
+  text-align: center;
+  height: 100%;
+}
+
+.kpi .label {
+  color: var(--muted);
+  font-size: 0.8rem;
+  letter-spacing: 0.2px;
+  margin-bottom: 0.5rem;
+  display: block;
+}
+
+.kpi .value {
+  font-weight: 700;
+  font-size: 1.6rem;
+  color: var(--ink);
+  display: block;
+  line-height: 1.2;
+}
+
+/* Fix button alignment in workflow */
+.btnline > div {
+  display: flex;
+  gap: 8px;
+}
+
+.btnline > div > button {
+  flex: 1;
+  min-height: 36px;
+}
+
+/* Fix column alignment in workflow cards */
+[data-testid="column"] {
+  align-items: stretch;
+}
+
+/* Ensure proper spacing in workflow actions */
+.stButton > button {
+  width: 100%;
+  margin: 2px 0;
+}
+
+/* Fix notification alignment */
+.ntf {
+  background: #111827;
+  border: 1px solid #1f2937;
+  border-radius: 10px;
+  padding: 12px 14px;
+  margin: 8px 0;
+}
+
+.ntf .title {
+  font-weight: 700;
+  margin-bottom: 4px;
+}
+
+.ntf .meta {
+  color: #94a3b8;
+  font-size: 0.78rem;
+  margin-bottom: 6px;
+}
+
+/* Fix form controls alignment */
+.stSelectbox, .stNumberInput, .stTextInput {
+  margin-bottom: 8px;
+}
+
+/* Ensure charts are properly contained */
+.js-plotly-plot, .plotly, .vega-embed {
+  width: 100% !important;
+}
+
+/* Fix data table alignment */
+.dataframe {
+  width: 100%;
+}
+
+/* Fix the main title alignment */
+h1, h2, h3 {
+  margin-top: 0 !important;
+  margin-bottom: 1rem !important;
+}
+
+/* Fix the workflow card header */
+.streamlit-container {
+  width: 100%;
+}
+
+/* Mobile responsiveness */
+@media (max-width: 768px) {
+  .headerbar {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 1rem;
+  }
+  
+  .kpi {
+    margin-bottom: 1rem;
+  }
+  
+  .card {
+    padding: 12px;
+  }
+  
+  /* Stack columns on mobile */
+  [data-testid="column"] {
+    width: 100% !important;
+  }
+}
 </style>
 """, unsafe_allow_html=True)
-
 # -------------------- Utilities --------------------
 def now_ts() -> float: return time.time()
 def fmt_ts(ts: float, short=False) -> str:
@@ -67,7 +254,40 @@ def minutes_between(t1, t2): return None if not t1 or not t2 else (t2 - t1)/60.0
 def within_date_range(ts: float, d0: date, d1: date) -> bool:
     try: d = datetime.fromtimestamp(ts).date(); return d0 <= d <= d1
     except: return False
+# Error handling & validation
+def validate_referral_data(referral):
+    """Validate referral data structure"""
+    required_fields = ["id", "patient", "status", "times"]
+    for field in required_fields:
+        if field not in referral:
+            return False, f"Missing required field: {field}"
+    
+    # Validate timestamp formats
+    try:
+        for time_key, time_value in referral["times"].items():
+            if time_value and time_value < 0:
+                return False, f"Invalid timestamp: {time_key}"
+    except (TypeError, KeyError):
+        return False, "Invalid time structure"
+    
+    return True, "Valid"
 
+def safe_date_conversion(ts):
+    """Safely convert timestamp to date"""
+    try:
+        return datetime.fromtimestamp(ts).date()
+    except (TypeError, ValueError, OSError):
+        return None
+
+def safe_get(obj, keys, default=None):
+    """Safely get nested dictionary values"""
+    try:
+        for key in keys.split('.'):
+            obj = obj[key]
+        return obj
+    except (KeyError, TypeError):
+        return default
+        
 # -------------------- Synthetic Data --------------------
 FACILITY_POOL = [
     "NEIGRIHMS", "Civil Hospital Shillong", "Nazareth Hospital",
@@ -201,6 +421,33 @@ def push_notification(kind: str, title: str, body: str, ref_id: str = None, seve
 def unread_count():
     return sum(1 for n in st.session_state.notifications if not n["read"])
 
+# Data persistence functions
+def load_persistent_data():
+    """Load data from JSON file for persistence"""
+    try:
+        with open("referrals_data.json", "r") as f:
+            st.session_state.referrals_all = json.load(f)
+        st.success("✅ Loaded existing data")
+    except FileNotFoundError:
+        st.session_state.referrals_all = seed_referrals_range(days=60, seed=2025)
+        st.info("📊 Created new synthetic data")
+    
+    st.session_state.data_loaded = True
+
+def save_data():
+    """Save data to JSON file"""
+    try:
+        with open("referrals_data.json", "w") as f:
+            json.dump(st.session_state.referrals_all, f, indent=2)
+        return True
+    except Exception as e:
+        st.error(f"❌ Failed to save data: {e}")
+        return False
+
+# Initialize data if not loaded
+if "data_loaded" not in st.session_state or not st.session_state.data_loaded:
+    load_persistent_data()
+    
 # -------------------- Sidebar Controls --------------------
 st.sidebar.header("Receiving Hospital")
 facility = st.sidebar.selectbox("You are receiving for:", st.session_state.get("facilities", ["NEIGRIHMS"]), index=0)
@@ -228,7 +475,26 @@ if auto:
         st_autorefresh(interval=3000, key="rx_live_autorefresh")
     except ImportError:
         st.sidebar.warning("Auto-refresh requires streamlit-autorefresh package")
+# Debug utilities in sidebar
+st.sidebar.markdown("---")
+DEBUG = st.sidebar.checkbox("🔧 Debug Mode", value=False)
 
+if DEBUG:
+    st.sidebar.markdown("### Debug Tools")
+    if st.sidebar.button("Reset Data"):
+        st.session_state.referrals_all = seed_referrals_range(days=60, seed=2025)
+        st.session_state.data_loaded = True
+        st.sidebar.success("Data reset complete")
+    
+    if st.sidebar.button("Save Data"):
+        if save_data():
+            st.sidebar.success("Data saved successfully")
+    
+    if st.sidebar.button("Generate Test Alert"):
+        push_notification("TEST", "Test Notification", "This is a test notification", "TEST-001", "info")
+        st.sidebar.success("Test notification sent")
+# Setup real-time listener in main flow
+setup_real_time_listener()        
 # -------------------- Filtered dataset --------------------
 refs = [r for r in st.session_state.referrals_all if r["dest"] == facility and within_date_range(r["times"].get("first_contact_ts", now_ts()), d0, d1)]
 
@@ -303,16 +569,16 @@ def to_row(r):
 
 adf = pd.DataFrame([to_row(r) for r in refs])
 
-total = len(adf)
-awaiting = len(adf[adf["status"].isin(["PREALERT","ACCEPTED","ENROUTE"])])
-enroute = len(adf[adf["status"]=="ENROUTE"])
-arrived = len(adf[adf["status"]=="ARRIVE_DEST"])
-handover = len(adf[adf["status"]=="HANDOVER"])
-rejected = len(adf[adf["status"]=="REJECTED"])
-accept_base = len(adf[adf["status"].isin(["PREALERT","ACCEPTED","ENROUTE","ARRIVE_DEST","HANDOVER","REJECTED"])])
-accept_rate = (100.0 * (accept_base - rejected) / accept_base) if accept_base else 0.0
-eta_vals = adf.loc[adf["status"].isin(["ENROUTE","ARRIVE_DEST"]) & adf["eta_min"].notna(), "eta_min"].tolist()
-avg_eta = round(sum(eta_vals)/len(eta_vals),1) if eta_vals else 0.0
+# Use cached analytics data for better performance
+analytics_data = get_analytics_data(adf, d0, d1)
+
+total = analytics_data.get("total", 0)
+awaiting = analytics_data.get("awaiting", 0)
+enroute = analytics_data.get("enroute", 0)
+arrived = analytics_data.get("arrived", 0)
+handover = analytics_data.get("handover", 0)
+rejected = analytics_data.get("rejected", 0)
+accept_rate = analytics_data.get("accept_rate", 0.0)
 
 # Get ICU beds for current facility
 icu_open = st.session_state.facility_meta[facility]["ICU_open"]
@@ -596,6 +862,70 @@ if st.session_state.open_case_id:
             st.success("Live feed closed")
             st.rerun()
 
+# Enhanced real-time features
+def setup_real_time_listener():
+    """Set up real-time event listening"""
+    if "last_poll_time" not in st.session_state:
+        st.session_state.last_poll_time = now_ts()
+    
+    # Poll for new events every 5 seconds if auto-refresh is enabled
+    if auto and (now_ts() - st.session_state.last_poll_time > 5):
+        check_for_new_events()
+        st.session_state.last_poll_time = now_ts()
+
+def check_for_new_events():
+    """Check for new system-wide events"""
+    try:
+        new_events = poll_events_since(st.session_state.get("system_last_event_id", 0))
+        if new_events:
+            st.session_state.system_last_event_id = max(e["id"] for e in new_events)
+            for event in new_events:
+                handle_system_event(event)
+    except Exception as e:
+        st.error(f"Error checking events: {e}")
+
+def handle_system_event(event):
+    """Handle system-wide events"""
+    event_type = event.get("type", "")
+    case_id = event.get("case_id", "")
+    
+    if event_type == "system.alert":
+        push_notification("SYSTEM_ALERT", event.get("title", "System Alert"), 
+                         event.get("message", ""), case_id, "warning")
+# Performance optimizations with caching
+@st.cache_data(ttl=300)  # Cache for 5 minutes
+def get_analytics_data(_adf, d0, d1):
+    """Cache expensive analytics calculations"""
+    if _adf.empty:
+        return {}
+    
+    # Calculate metrics (this is computationally expensive)
+    metrics = {
+        "total": len(_adf),
+        "awaiting": len(_adf[_adf["status"].isin(["PREALERT","ACCEPTED","ENROUTE"])]),
+        "enroute": len(_adf[_adf["status"]=="ENROUTE"]),
+        "arrived": len(_adf[_adf["status"]=="ARRIVE_DEST"]),
+        "handover": len(_adf[_adf["status"]=="HANDOVER"]),
+        "rejected": len(_adf[_adf["status"]=="REJECTED"]),
+        "accept_rate": calculate_accept_rate(_adf),
+        "median_times": calculate_median_times(_adf)
+    }
+    
+    return metrics
+
+def calculate_accept_rate(df):
+    """Calculate acceptance rate"""
+    accept_base = len(df[df["status"].isin(["PREALERT","ACCEPTED","ENROUTE","ARRIVE_DEST","HANDOVER","REJECTED"])])
+    rejected = len(df[df["status"]=="REJECTED"])
+    return (100.0 * (accept_base - rejected) / accept_base) if accept_base else 0.0
+
+def calculate_median_times(df):
+    """Calculate median times for SLAs"""
+    return {
+        "decision_to_dispatch": median(df["decision_to_dispatch_min"].dropna()) if not df["decision_to_dispatch_min"].dropna().empty else 0,
+        "dispatch_to_arrival": median(df["dispatch_to_arrival_min"].dropna()) if not df["dispatch_to_arrival_min"].dropna().empty else 0,
+        "arrival_to_handover": median(df["arrival_to_handover_min"].dropna()) if not df["arrival_to_handover_min"].dropna().empty else 0
+    }                         
 # -------------------- Advanced Analytics (date range) --------------------
 st.subheader("Analytics – Date Range")
 
@@ -728,7 +1058,65 @@ else:
     st.markdown("**Referrals (range table)**")
     show_cols = ["id","status","triage","case_type","priority","ambulance","eta_min","first_contact"]
     st.dataframe(adf[show_cols].sort_values("first_contact", ascending=False), use_container_width=True, height=280)
+# Enhanced export & reporting
+def generate_daily_report():
+    """Generate comprehensive daily report"""
+    today_data = [r for r in refs if safe_date_conversion(r["times"].get("first_contact_ts")) == datetime.now().date()]
+    
+    report = {
+        "date": datetime.now().date().isoformat(),
+        "facility": facility,
+        "summary": {
+            "total_referrals": len(today_data),
+            "accepted": len([r for r in today_data if r["status"] != "REJECTED"]),
+            "rejected": len([r for r in today_data if r["status"] == "REJECTED"]),
+            "completion_rate": f"{calculate_accept_rate(pd.DataFrame([to_row(r) for r in today_data])):.1f}%"
+        },
+        "metrics": {
+            "avg_decision_to_dispatch": median([minutes_between(r["times"].get("decision_ts"), r["times"].get("dispatch_ts")) for r in today_data if r["times"].get("decision_ts") and r["times"].get("dispatch_ts")]) or 0,
+            "critical_cases": len([r for r in today_data if r["triage"]["decision"]["color"] == "RED"])
+        }
+    }
+    return report
 
+def export_clinical_summary(referral_id):
+    """Export ISBAR summary for clinical handover"""
+    referral = next((r for r in refs if r["id"] == referral_id), None)
+    if referral:
+        return generate_isbar_template(referral)
+    return None
+
+def generate_isbar_template(referral):
+    """Generate ISBAR handover template"""
+    return f"""
+ISBAR CLINICAL HANDOVER - {referral['id']}
+========================================
+IDENTIFICATION:
+- Patient: {referral['patient']['name']}
+- Age/Sex: {referral['patient']['age']}/{referral['patient']['sex']}
+- ID: {referral['patient']['id']}
+
+SITUATION:
+- Chief Complaint: {referral['triage']['complaint']}
+- Triage: {referral['triage']['decision']['color']}
+- Priority: {referral['transport'].get('priority', 'Urgent')}
+
+BACKGROUND:
+- Referring Facility: {referral['referrer']['facility']}
+- Referring Person: {referral['referrer']['name']} ({referral['referrer']['role']})
+- Provisional DX: {referral['provisionalDx'].get('label', '—')}
+
+ASSESSMENT:
+- Latest Vitals: HR {referral['triage']['hr']}, BP {referral['triage']['sbp']}, RR {referral['triage']['rr']}, SpO2 {referral['triage']['spo2']}%
+- Temperature: {referral['triage']['temp']}°C
+- AVPU: {referral['triage']['avpu']}
+
+RECOMMENDATION:
+- Current Status: {referral['status']}
+- Ambulance: {referral['transport'].get('ambulance', '—')}
+- ETA: {referral['transport'].get('eta_min', '—')} minutes
+========================================
+"""
 # -------------------- Exports --------------------
 st.subheader("Exports")
 colx1, colx2 = st.columns(2)
