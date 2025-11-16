@@ -569,7 +569,9 @@ investor_tab1, investor_tab2, investor_tab3, investor_tab4 = st.tabs([
     "💰 Monetization", 
     "🎯 Innovation Metrics"
 ])
-
+# Temporary placeholder function
+def business_impact_dashboard():
+    st.write("Business impact dashboard - function being implemented")
 with investor_tab1:
     business_impact_dashboard()
     st.markdown("---")
