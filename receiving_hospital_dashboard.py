@@ -12,6 +12,7 @@ import random
 import uuid
 import json
 from statistics import median
+
 # ADDED: event bus
 try:
     from storage import poll_events_since, publish_event  # publish_event optional here (we use poll)
@@ -20,7 +21,7 @@ except ImportError:
     def poll_events_since(*args, **kwargs): return []
     def publish_event(*args, **kwargs): return None
 
-# -------------------- Constants (MOVE THIS SECTION UP) --------------------
+# -------------------- Constants --------------------
 FACILITY_POOL = [
     "NEIGRIHMS", "Civil Hospital Shillong", "Nazareth Hospital",
     "Ganesh Das MCH", "Sohra Civil Hospital", "Shillong Polyclinic & Trauma"
@@ -30,6 +31,88 @@ AMB_TYPES = ["BLS", "ALS", "ALS + Vent", "Neonatal", "Other"]
 PRIORITY = ["Routine", "Urgent", "STAT"]
 TRIAGE = ["RED", "YELLOW", "GREEN"]
 REJECT_REASONS = ["No ICU bed", "No specialist", "Equipment down", "Over capacity", "Outside scope", "Patient diverted"]
+
+# -------------------- Synthetic Data Functions (MOVED UP) --------------------
+def _seed_one(rng: random.Random, day_epoch: float, dest: str):
+    compl = rng.choices(COMPLAINTS, weights=[0.2,0.22,0.18,0.18,0.15,0.07])[0]
+    tri = rng.choices(TRIAGE, weights=[0.34,0.44,0.22])[0]
+    priority = rng.choices(PRIORITY, weights=[0.25,0.5,0.25])[0]
+    amb = rng.choices(AMB_TYPES, weights=[0.45,0.32,0.15,0.03,0.05])[0]
+
+    first_contact = day_epoch + rng.randint(0, 23*3600)
+    decision_ts = first_contact + rng.randint(60, 25*60)
+    dispatch_ts = decision_ts + rng.randint(2*60, 12*60)
+    travel_min = rng.randint(8, 85)
+    arrive_dest_ts = dispatch_ts + travel_min*60
+    handover_ts = arrive_dest_ts + rng.randint(5*60, 35*60)
+
+    status = rng.choices(
+        ["PREALERT","ACCEPTED","ENROUTE","ARRIVE_DEST","HANDOVER","REJECTED"],
+        weights=[0.24,0.15,0.22,0.2,0.14,0.05]
+    )[0]
+
+    times = {"first_contact_ts": first_contact, "decision_ts": decision_ts}
+    if status in ["ACCEPTED","ENROUTE","ARRIVE_DEST","HANDOVER"]:
+        times["dispatch_ts"] = dispatch_ts
+    if status in ["ENROUTE","ARRIVE_DEST","HANDOVER"]:
+        times["enroute_ts"] = dispatch_ts + rng.randint(0, 3*60)
+    if status in ["ARRIVE_DEST","HANDOVER"]:
+        times["arrive_dest_ts"] = arrive_dest_ts
+    if status in ["HANDOVER"]:
+        times["handover_ts"] = handover_ts
+
+    age = rng.randint(1, 85)
+    sex = rng.choice(["Male","Female"])
+    pid = f"PID-{rng.randint(100000,999999)}"
+    ref_name = rng.choice(["Dr. Rai", "Dr. Khonglah", "ANM Pynsuk", "Dr. Sharma", "Dr. Singh"])
+    ref_fac = rng.choice(["PHC Mawlai","CHC Smit","CHC Pynursla","District Hospital Shillong","PHC Nongpoh","CHC Jowai"])
+    eta_min = travel_min if status in ["ENROUTE","ARRIVE_DEST"] else rng.randint(10, 90)
+    transport = {"priority": priority, "ambulance": amb, "eta_min": eta_min}
+    dx_label = {
+        "Maternal":"Postpartum haemorrhage",
+        "Trauma":"Head injury, possible SDH",
+        "Stroke":"Acute ischemic stroke",
+        "Cardiac":"Suspected STEMI",
+        "Sepsis":"Sepsis, hypotension",
+        "Other":"Acute respiratory failure"
+    }[compl]
+    pdx = {"code":"-", "label":dx_label, "case_type":compl}
+
+    return dict(
+        id=str(uuid.uuid4())[:8].upper(),
+        patient={"name": f"Pt-{rng.randint(0,9999):04d}", "age": age, "sex": sex, "id": pid},
+        referrer={"name": ref_name, "facility": ref_fac, "role": rng.choice(["Doctor/Physician","ANM/ASHA/EMT"])},
+        provisionalDx=pdx,
+        triage={"complaint": compl, "decision":{"color":tri}, "hr": rng.randint(60,150),
+                "sbp": rng.randint(80,180), "rr": rng.randint(12,35),
+                "temp": round(rng.uniform(36.0,39.8),1), "spo2": rng.randint(86,99), "avpu": "A"},
+        dest=dest,
+        transport=transport,
+        resuscitation=[],
+        interventions=[],
+        times=times,
+        status=status,
+        audit_log=[]
+    )
+
+def seed_referrals_range(days=60, seed=2025):
+    """Generate synthetic referral data for the specified number of days"""
+    rng = random.Random(seed)
+    all_refs = []
+    today = datetime.now().date()
+    for i in range(days):
+        d = today - timedelta(days=i)
+        day_epoch = datetime.combine(d, datetime.min.time()).timestamp()
+        # daily volume (random, slightly higher weekdays)
+        weekday = d.weekday()
+        base = rng.randint(90, 160) if weekday < 5 else rng.randint(60, 120)
+        # distribute across facilities
+        for dest in FACILITY_POOL:
+            k = max(0, int(base * rng.uniform(0.12, 0.22)))  # ~12-22% share per facility
+            for _ in range(k):
+                all_refs.append(_seed_one(rng, day_epoch, dest))
+    return all_refs
+
 # -------------------- Intervention Types --------------------
 REFERRING_INTERVENTIONS = [
     "Oxygen therapy", "IV access established", "Fluid bolus", 
@@ -52,7 +135,7 @@ EMT_INTERVENTIONS = [
 
 INTERVENTION_STATUS = ["Planned", "In Progress", "Completed", "Cancelled"]
 
-# -------------------- Configuration Management (NOW THIS CAN USE FACILITY_POOL) --------------------
+# -------------------- Configuration Management --------------------
 CONFIG = {
     "facilities": FACILITY_POOL,
     "sla_thresholds": {
@@ -129,7 +212,7 @@ def auto_save():
         "resources": st.session_state.get("resources", {}),
         "notifications": st.session_state.get("notifications", [])
     }
-    
+
 # -------------------- Page Setup & Style --------------------
 st.set_page_config(page_title="Receiving Hospital – AHECN (Enhanced)", layout="wide")
 
@@ -286,6 +369,7 @@ h1, h2, h3 {
 }
 </style>
 """, unsafe_allow_html=True)
+
 # -------------------- Demo User Setup --------------------
 if "user" not in st.session_state:
     st.session_state.user = {
@@ -293,26 +377,85 @@ if "user" not in st.session_state:
         "role": "Emergency Physician",
         "facility": "NEIGRIHMS"
     }
-# -------------------- Data Initialization --------------------
-# Ensure we have data to display - MOVED AFTER session state initialization
+
+# -------------------- Session State Initialization (FIXED) --------------------
+# Initialize session state with proper ordering
+if "referrals_all" not in st.session_state:
+    st.session_state.referrals_all = seed_referrals_range(days=7, seed=2025)  # Now this function is defined
+
+if "facilities" not in st.session_state:
+    st.session_state.facilities = FACILITY_POOL
+
+if "facility_meta" not in st.session_state:
+    # Initialize ICU bed counts for each facility
+    st.session_state.facility_meta = {}
+    for facility_name in FACILITY_POOL:
+        st.session_state.facility_meta[facility_name] = {"ICU_open": random.randint(5, 20)}
+
+if "notifications" not in st.session_state: 
+    st.session_state.notifications = []
+if "show_notifs" not in st.session_state: 
+    st.session_state.show_notifs = False
+if "notify_rules" not in st.session_state:
+    st.session_state.notify_rules = {"RED_only": True, "eta_soon": True, "rejections": True}
+
+# ADDED: keep per-case event watermark + live buffer + which case is open
+if "last_event_id" not in st.session_state: 
+    st.session_state.last_event_id = {}          # {case_id: last_id}
+if "live_feed" not in st.session_state: 
+    st.session_state.live_feed = {}                  # {case_id: [events]}
+if "open_case_id" not in st.session_state: 
+    st.session_state.open_case_id = None         # case subscribing
+if "vitals_buffer" not in st.session_state: 
+    st.session_state.vitals_buffer = {}         # {case_id: [dict]}
+if "interventions_buffer" not in st.session_state: 
+    st.session_state.interventions_buffer = {}  # {case_id: [dict]}
+
+# Initialize interventions storage
+if "interventions" not in st.session_state:
+    st.session_state.interventions = {}
+
+# Initialize resources
+if "resources" not in st.session_state:
+    st.session_state.resources = {
+        "NEIGRIHMS": {"icu_beds": 12, "icu_available": 4},
+        "Civil Hospital Shillong": {"icu_beds": 8, "icu_available": 2},
+        "Nazareth Hospital": {"icu_beds": 6, "icu_available": 1},
+        "Ganesh Das MCH": {"icu_beds": 10, "icu_available": 3},
+        "Sohra Civil Hospital": {"icu_beds": 4, "icu_available": 2},
+        "Shillong Polyclinic & Trauma": {"icu_beds": 8, "icu_available": 0}
+    }
+
+# Simple demo authentication
+if "authenticated" not in st.session_state:
+    st.session_state.authenticated = True
+
+# Auto-refresh setting
+if "auto_refresh" not in st.session_state:
+    st.session_state.auto_refresh = True
+
+# Data initialization flag
 if "data_initialized" not in st.session_state:
-    # Check if referrals_all exists and has data
-    if "referrals_all" not in st.session_state or not st.session_state.referrals_all:
-        st.session_state.referrals_all = seed_referrals_range(days=7, seed=2025)
     st.session_state.data_initialized = True
+
 # -------------------- Utilities --------------------
 def now_ts() -> float: return time.time()
+
 def fmt_ts(ts: float, short=False) -> str:
     if not ts: return "—"
     try: return datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M" if not short else "%H:%M")
     except: return "—"
+
 def triage_pill(color: str) -> str:
     c=(color or "").upper(); cls = "red" if c=="RED" else "yellow" if c=="YELLOW" else "green"
     return f'<span class="pill {cls}">{c}</span>'
+
 def minutes_between(t1, t2): return None if not t1 or not t2 else (t2 - t1)/60.0
+
 def within_date_range(ts: float, d0: date, d1: date) -> bool:
     try: d = datetime.fromtimestamp(ts).date(); return d0 <= d <= d1
     except: return False
+
 # Error handling & validation
 def validate_referral_data(referral):
     """Validate referral data structure"""
@@ -346,6 +489,7 @@ def safe_get(obj, keys, default=None):
         return obj
     except (KeyError, TypeError):
         return default
+
 def add_intervention(case_id, intervention, details, interv_type):
     """Quick intervention tracking"""
     if "interventions" not in st.session_state:
@@ -362,77 +506,77 @@ def add_intervention(case_id, intervention, details, interv_type):
     })
     
     # Show success message
-    st.success(f"Added: {intervention}")    
-def auto_save():
-    """Simple auto-save to session state"""
-    # This ensures data persists during the session
-    if "saved_data" not in st.session_state:
-        st.session_state.saved_data = {}
+    st.success(f"Added: {intervention}")
+
+def push_notification(title: str, body: str, case_id: str = None, urgency: str = "medium"):
+    """Enhanced notifications with urgency levels"""
+    icon = "🔴" if urgency == "high" else "🟡" if urgency == "medium" else "🔵"
     
-    st.session_state.saved_data = {
-        "referrals": st.session_state.referrals_all,
-        "interventions": st.session_state.get("interventions", {}),
-        "resources": st.session_state.get("resources", {}),
-        "notifications": st.session_state.get("notifications", [])
-    }
-
-# Also add this initialization at the start of your session state
-if "saved_data" in st.session_state:
-    # Restore from saved data
-    st.session_state.referrals_all = st.session_state.saved_data.get("referrals", [])
-    st.session_state.interventions = st.session_state.saved_data.get("interventions", {})
-    st.session_state.resources = st.session_state.saved_data.get("resources", {})
-    st.session_state.notifications = st.session_state.saved_data.get("notifications", [])
-else:
-    # Initialize fresh
-    st.session_state.interventions = {}
-    st.session_state.resources = {
-        "NEIGRIHMS": {"icu_beds": 12, "icu_available": 4},
-        "Civil Hospital Shillong": {"icu_beds": 8, "icu_available": 2},
-        "Nazareth Hospital": {"icu_beds": 6, "icu_available": 1},
-        "Ganesh Das MCH": {"icu_beds": 10, "icu_available": 3},
-        "Sohra Civil Hospital": {"icu_beds": 4, "icu_available": 2},
-        "Shillong Polyclinic & Trauma": {"icu_beds": 8, "icu_available": 0}
-    }    
-def display_patient_details(patient):
-    """Display comprehensive patient details in a structured format"""
+    if "notifications" not in st.session_state:
+        st.session_state.notifications = []
     
-    with st.container():
-        st.markdown("---")
-        
-        # Header with critical info
-        col1, col2, col3 = st.columns([2, 1, 1])
-        with col1:
-            st.markdown(f"### 🏥 {patient['patient']['name']}, {patient['patient']['age']} {patient['patient']['sex']}")
-            st.markdown(f"**ID:** {patient['id']} | **Triage:** {patient['triage']['decision']['color']} | **Status:** {patient['status']}")
-        
-        with col2:
-            st.markdown(f"**Priority:** {patient['transport']['priority']}")
-            st.markdown(f"**Ambulance:** {patient['transport']['ambulance']}")
-            st.markdown(f"**ETA:** {patient['transport'].get('eta_min', '—')} min")
-        
-        with col3:
-            st.markdown(f"**Complaint:** {patient['triage']['complaint']}")
-            st.markdown(f"**Referring:** {patient['referrer']['facility']}")
-            st.markdown(f"**By:** {patient['referrer']['name']}")
+    st.session_state.notifications.insert(0, {
+        "id": str(uuid.uuid4())[:8],
+        "ts": now_ts(),
+        "title": f"{icon} {title}",
+        "body": body,
+        "case_id": case_id,
+        "read": False,
+        "urgency": urgency
+    })
+    
+    # Show toast for high urgency
+    if urgency == "high":
+        st.toast(f"{icon} {title}: {body}", icon="🚨")
 
-        # Tabbed interface for different detail sections
-        tab1, tab2, tab3, tab4, tab5 = st.tabs(["📊 Clinical Overview", "💊 Interventions", "📈 Vitals Trend", "🕒 Timeline", "📋 ISBAR Report"])
+def unread_count():
+    return sum(1 for n in st.session_state.notifications if not n["read"])
 
-        with tab1:
-            display_clinical_overview(patient)
-        
-        with tab2:
-            display_interventions(patient)
-        
-        with tab3:
-            display_vitals_trend(patient)
-        
-        with tab4:
-            display_timeline(patient)
-        
-        with tab5:
-            display_isbar_report(patient)
+# Data persistence functions
+def load_persistent_data():
+    """Load data from JSON file for persistence"""
+    try:
+        with open("referrals_data.json", "r") as f:
+            st.session_state.referrals_all = json.load(f)
+        st.success("✅ Loaded existing data")
+    except FileNotFoundError:
+        st.session_state.referrals_all = seed_referrals_range(days=60, seed=2025)
+        st.info("📊 Created new synthetic data")
+    
+    st.session_state.data_loaded = True
+
+def save_data():
+    """Save data to JSON file"""
+    try:
+        with open("referrals_data.json", "w") as f:
+            json.dump(st.session_state.referrals_all, f, indent=2)
+        return True
+    except Exception as e:
+        st.error(f"❌ Failed to save data: {e}")
+        return False
+
+# Initialize data if not loaded
+if "data_loaded" not in st.session_state or not st.session_state.data_loaded:
+    load_persistent_data()
+
+# -------------------- Patient Detail Functions --------------------
+def get_time_ago(timestamp):
+    """Calculate how long ago an event occurred"""
+    if not timestamp:
+        return "—"
+    
+    now = time.time()
+    diff = now - timestamp
+    
+    if diff < 60:
+        return "Just now"
+    elif diff < 3600:
+        return f"{int(diff/60)} min ago"
+    elif diff < 86400:
+        return f"{int(diff/3600)} hours ago"
+    else:
+        return f"{int(diff/86400)} days ago"
+
 def create_demo_cases():
     """Create realistic demo cases for the dashboard"""
     demo_cases = []
@@ -449,7 +593,7 @@ def create_demo_cases():
             "hr": 135, "sbp": 85, "rr": 22, 
             "spo2": 89, "temp": 36.8, "avpu": "A"
         },
-        "dest": facility,
+        "dest": "NEIGRIHMS",
         "transport": {"priority": "STAT", "ambulance": "ALS + Vent", "eta_min": 12},
         "resuscitation": [],
         "interventions": [],
@@ -478,7 +622,7 @@ def create_demo_cases():
             "hr": 120, "sbp": 95, "rr": 24, 
             "spo2": 94, "temp": 37.2, "avpu": "A"
         },
-        "dest": facility,
+        "dest": "NEIGRIHMS",
         "transport": {"priority": "Urgent", "ambulance": "ALS", "eta_min": 25},
         "resuscitation": [],
         "interventions": [],
@@ -504,7 +648,7 @@ def create_demo_cases():
             "hr": 88, "sbp": 130, "rr": 18, 
             "spo2": 98, "temp": 36.5, "avpu": "V"
         },
-        "dest": facility,
+        "dest": "NEIGRIHMS",
         "transport": {"priority": "Urgent", "ambulance": "BLS", "eta_min": 40},
         "resuscitation": [],
         "interventions": [],
@@ -556,7 +700,7 @@ def create_random_case():
             "temp": round(random.uniform(36.0,39.8),1),
             "avpu": "A"
         },
-        "dest": facility,
+        "dest": "NEIGRIHMS",
         "transport": {
             "priority": priority,
             "ambulance": random.choice(["BLS", "ALS", "ALS + Vent"]),
@@ -581,7 +725,6 @@ def get_patient_condition(patient):
     else:
         return f"Stable {complaint}"
 
-# -------------------- Patient Detail Functions --------------------
 def display_patient_details(patient):
     """Display comprehensive patient details in a structured format"""
     
@@ -679,130 +822,55 @@ def display_clinical_overview(patient):
                 st.error(alert)
         else:
             st.success("✅ No critical alerts")
-# -------------------- Patient Detail Functions --------------------
-def display_patient_details(patient):
-    """Display comprehensive patient details in a structured format"""
-    
-    with st.container():
-        st.markdown("---")
-        
-        # Header with critical info
-        col1, col2, col3 = st.columns([2, 1, 1])
-        with col1:
-            st.markdown(f"### 🏥 {patient['patient']['name']}, {patient['patient']['age']} {patient['patient']['sex']}")
-            st.markdown(f"**ID:** {patient['id']} | **Triage:** {patient['triage']['decision']['color']} | **Status:** {patient['status']}")
-        
-        with col2:
-            st.markdown(f"**Priority:** {patient['transport']['priority']}")
-            st.markdown(f"**Ambulance:** {patient['transport']['ambulance']}")
-            st.markdown(f"**ETA:** {patient['transport'].get('eta_min', '—')} min")
-        
-        with col3:
-            st.markdown(f"**Complaint:** {patient['triage']['complaint']}")
-            st.markdown(f"**Referring:** {patient['referrer']['facility']}")
-            st.markdown(f"**By:** {patient['referrer']['name']}")
 
-        # Tabbed interface for different detail sections
-        tab1, tab2, tab3, tab4, tab5 = st.tabs(["📊 Clinical Overview", "💊 Interventions", "📈 Vitals Trend", "🕒 Timeline", "📋 ISBAR Report"])
-
-        with tab1:
-            display_clinical_overview(patient)
-        
-        with tab2:
-            display_interventions(patient)
-        
-        with tab3:
-            display_vitals_trend(patient)
-        
-        with tab4:
-            display_timeline(patient)
-        
-        with tab5:
-            display_isbar_report(patient)
-
-def display_clinical_overview(patient):
-    """Display clinical overview with current status and actions"""
+def display_interventions(patient):
+    """Display interventions tab"""
+    st.markdown("#### Referring Facility Interventions")
     
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        st.markdown("#### Current Vitals")
-        v1, v2, v3, v4 = st.columns(4)
-        v1.metric("HR", f"{patient['triage']['hr']} bpm")
-        v2.metric("BP", f"{patient['triage']['sbp']} mmHg")
-        v3.metric("SpO2", f"{patient['triage']['spo2']}%")
-        v4.metric("Temp", f"{patient['triage']['temp']}°C")
-        
-        st.markdown("#### Clinical Actions")
-        action_col1, action_col2, action_col3, action_col4 = st.columns(4)
-        
-        if action_col1.button("✅ Accept", key=f"accept_{patient['id']}", use_container_width=True):
-            patient["status"] = "ACCEPTED"
-            auto_save()
-            st.rerun()
-            
-        if action_col2.button("🚗 En Route", key=f"enroute_{patient['id']}", use_container_width=True):
-            patient["status"] = "ENROUTE"
-            auto_save()
-            st.rerun()
-            
-        if action_col3.button("🏥 Arrived", key=f"arrived_{patient['id']}", use_container_width=True):
-            patient["status"] = "ARRIVE_DEST"
-            auto_save()
-            st.rerun()
-            
-        if action_col4.button("👥 Handover", key=f"handover_{patient['id']}", use_container_width=True):
-            patient["status"] = "HANDOVER"
-            auto_save()
-            st.rerun()
-
-    with col2:
-        st.markdown("#### Provisional Diagnosis")
-        st.info(patient['provisionalDx'].get('label', 'No diagnosis provided'))
-        
-        st.markdown("#### Critical Alerts")
-        # Check for critical values
-        alerts = []
-        if patient['triage']['hr'] > 130 or patient['triage']['hr'] < 50:
-            alerts.append("🚨 Critical Heart Rate")
-        if patient['triage']['sbp'] < 90:
-            alerts.append("🚨 Hypotension")
-        if patient['triage']['spo2'] < 92:
-            alerts.append("🚨 Hypoxia")
-        if patient['triage']['avpu'] != 'A':
-            alerts.append("🚨 Altered Consciousness")
-            
-        if alerts:
-            for alert in alerts:
-                st.error(alert)
-        else:
-            st.success("✅ No critical alerts")
-def get_time_ago(timestamp):
-    """Calculate how long ago an event occurred"""
-    if not timestamp:
-        return "—"
-    
-    now = time.time()
-    diff = now - timestamp
-    
-    if diff < 60:
-        return "Just now"
-    elif diff < 3600:
-        return f"{int(diff/60)} min ago"
-    elif diff < 86400:
-        return f"{int(diff/3600)} hours ago"
+    # Show existing interventions
+    case_interventions = st.session_state.interventions.get(patient["id"], [])
+    if case_interventions:
+        for interv in case_interventions:
+            st.write(f"• {interv['intervention']}: {interv['details']} ({fmt_ts(interv['timestamp'], short=True)})")
     else:
-        return f"{int(diff/86400)} days ago"
+        st.info("No interventions recorded yet")
+    
+    # Add new intervention
+    st.markdown("#### Add New Intervention")
+    col1, col2 = st.columns([2, 1])
+    with col1:
+        intervention = st.selectbox("Intervention", REFERRING_INTERVENTIONS, key=f"interv_select_{patient['id']}")
+        details = st.text_input("Details", key=f"interv_details_{patient['id']}")
+    with col2:
+        if st.button("Add Intervention", key=f"add_interv_{patient['id']}"):
+            if intervention and details:
+                add_intervention(patient["id"], intervention, details, "referring")
+                st.rerun()
 
 def display_vitals_trend(patient):
     """Display vitals trend chart"""
-    if patient.get("vitals_history"):
-        vitals_df = pd.DataFrame(patient["vitals_history"])
-        vitals_df["time"] = pd.to_datetime(vitals_df["timestamp"], unit='s').dt.strftime("%H:%M")
-        
-        st.line_chart(vitals_df.set_index("time")[["hr", "sbp", "spo2"]])
-    else:
-        st.info("No vitals history available")
+    # For now, show current vitals since we don't have historical data
+    st.markdown("#### Current Vitals")
+    vitals_data = {
+        "Parameter": ["Heart Rate", "Blood Pressure", "Respiratory Rate", "SpO2", "Temperature"],
+        "Value": [
+            f"{patient['triage']['hr']} bpm",
+            f"{patient['triage']['sbp']} mmHg", 
+            f"{patient['triage']['rr']} /min",
+            f"{patient['triage']['spo2']}%",
+            f"{patient['triage']['temp']}°C"
+        ],
+        "Status": [
+            "Critical" if patient['triage']['hr'] > 130 or patient['triage']['hr'] < 50 else "Normal",
+            "Critical" if patient['triage']['sbp'] < 90 else "Normal",
+            "Normal",
+            "Critical" if patient['triage']['spo2'] < 92 else "Normal", 
+            "Normal"
+        ]
+    }
+    
+    vitals_df = pd.DataFrame(vitals_data)
+    st.dataframe(vitals_df, use_container_width=True, hide_index=True)
 
 def display_timeline(patient):
     """Display detailed timeline"""
@@ -851,28 +919,7 @@ def display_isbar_report(patient):
 **RECOMMENDATION**
 - Handoff Priority: {'HIGH' if patient['triage']['decision']['color'] == 'RED' else 'MEDIUM'}
 """
-    st.markdown(isbar_report)
-
-# Add these placeholder functions for ISBAR report
-def get_required_resources(patient):
-    """Determine required resources based on patient condition"""
-    if patient['triage']['decision']['color'] == 'RED':
-        return "ICU bed, Cardiac monitor, Emergency team"
-    elif patient['triage']['decision']['color'] == 'YELLOW':
-        return "ED bed, Monitoring equipment"
-    else:
-        return "General ward bed"
-
-def get_special_considerations(patient):
-    """Get special considerations for handoff"""
-    considerations = []
-    if patient['triage']['complaint'] == 'Cardiac':
-        considerations.append("Cardiac monitor required")
-    if patient['triage']['complaint'] == 'Trauma':
-        considerations.append("Trauma team alert")
-    if patient['triage']['spo2'] < 92:
-        considerations.append("Oxygen therapy needed")
-    return ", ".join(considerations) if considerations else "Standard care"            
+    st.markdown(isbar_report)      
 # -------------------- Synthetic Data --------------------
 FACILITY_POOL = [
     "NEIGRIHMS", "Civil Hospital Shillong", "Nazareth Hospital",
@@ -962,7 +1009,14 @@ def seed_referrals_range(days=60, seed=2025):
             for _ in range(k):
                 all_refs.append(_seed_one(rng, day_epoch, dest))
     return all_refs
+# TEMPORARY PLACEHOLDER - Add this RIGHT BEFORE session state initialization
+def seed_referrals_range(days=60, seed=2025):
+    """Temporary placeholder - will be replaced by actual function"""
+    return []  # Return empty list for now
 
+# Now the session state initialization can run without errors
+if "referrals_all" not in st.session_state:
+    st.session_state.referrals_all = seed_referrals_range(days=60, seed=2025)
 # -------------------- Session State --------------------
 if "referrals_all" not in st.session_state:
     st.session_state.referrals_all = seed_referrals_range(days=60, seed=2025)
