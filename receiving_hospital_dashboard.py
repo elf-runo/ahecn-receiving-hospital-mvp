@@ -30,6 +30,27 @@ AMB_TYPES = ["BLS", "ALS", "ALS + Vent", "Neonatal", "Other"]
 PRIORITY = ["Routine", "Urgent", "STAT"]
 TRIAGE = ["RED", "YELLOW", "GREEN"]
 REJECT_REASONS = ["No ICU bed", "No specialist", "Equipment down", "Over capacity", "Outside scope", "Patient diverted"]
+# -------------------- Intervention Types --------------------
+REFERRING_INTERVENTIONS = [
+    "Oxygen therapy", "IV access established", "Fluid bolus", 
+    "Medication administered", "Blood transfusion", "CPR initiated",
+    "Defibrillation", "Intubation", "Chest tube insertion",
+    "Splinting", "Wound care", "Medication: Analgesia",
+    "Medication: Antibiotics", "Medication: Antihypertensive",
+    "Medication: Anticonvulsant", "ECG performed", "Lab tests drawn"
+]
+
+EMT_INTERVENTIONS = [
+    "O2 started", "IV access", "IV fluids", "Cardiac monitoring",
+    "12-lead ECG", "Medication: Nitroglycerin", "Medication: Aspirin",
+    "Medication: Albuterol", "Medication: Epinephrine",
+    "CPR in progress", "Defibrillation", "Intubation",
+    "CPAP/BiPAP", "C-spine immobilization", "Extrication",
+    "Wound dressing", "Splinting", "Ventilator management",
+    "Pulse ox monitoring", "Blood glucose check"
+]
+
+INTERVENTION_STATUS = ["Planned", "In Progress", "Completed", "Cancelled"]
 
 # -------------------- Configuration Management (NOW THIS CAN USE FACILITY_POOL) --------------------
 CONFIG = {
@@ -422,7 +443,12 @@ if "vitals_buffer" not in st.session_state:
     st.session_state.vitals_buffer = {}         # {case_id: [dict]}
 if "interventions_buffer" not in st.session_state: 
     st.session_state.interventions_buffer = {}  # {case_id: [dict]}
-
+if "referring_interventions" not in st.session_state:
+    st.session_state.referring_interventions = {}  # {case_id: [interventions]}
+    
+if "emt_interventions" not in st.session_state:
+    st.session_state.emt_interventions = {}  # {case_id: [interventions]}
+    
 def push_notification(kind: str, title: str, body: str, ref_id: str = None, severity: str = "info"):
     st.session_state.notifications.insert(0, {
         "id": str(uuid.uuid4())[:8],
@@ -507,6 +533,72 @@ if DEBUG:
     if st.sidebar.button("Generate Test Alert"):
         push_notification("TEST", "Test Notification", "This is a test notification", "TEST-001", "info")
         st.sidebar.success("Test notification sent")
+
+# -------------------- Intervention Tracking Functions --------------------
+def add_referring_intervention(case_id, intervention, details, timestamp=None):
+    """Add a referring institution intervention"""
+    if case_id not in st.session_state.referring_interventions:
+        st.session_state.referring_interventions[case_id] = []
+    
+    intervention_record = {
+        "id": str(uuid.uuid4())[:8],
+        "intervention": intervention,
+        "details": details,
+        "timestamp": timestamp or now_ts(),
+        "type": "referring",
+        "status": "Completed"
+    }
+    
+    st.session_state.referring_interventions[case_id].append(intervention_record)
+    
+    # Also add to case audit log
+    case = next((r for r in st.session_state.referrals_all if r["id"] == case_id), None)
+    if case:
+        case["audit_log"].append({
+            "ts": datetime.now().isoformat(),
+            "action": "REFERRING_INTERVENTION",
+            "intervention": intervention,
+            "details": details
+        })
+    
+    return intervention_record
+
+def add_emt_intervention(case_id, intervention, details, status="Completed", timestamp=None):
+    """Add an EMT intervention during transit"""
+    if case_id not in st.session_state.emt_interventions:
+        st.session_state.emt_interventions[case_id] = []
+    
+    intervention_record = {
+        "id": str(uuid.uuid4())[:8],
+        "intervention": intervention,
+        "details": details,
+        "timestamp": timestamp or now_ts(),
+        "type": "emt",
+        "status": status
+    }
+    
+    st.session_state.emt_interventions[case_id].append(intervention_record)
+    
+    # Publish event for real-time updates
+    try:
+        publish_event("intervention.added", case_id, actor="emt", payload={
+            "name": intervention,
+            "details": details,
+            "status": status
+        })
+    except:
+        pass  # Silently fail if storage not available
+    
+    return intervention_record
+
+def get_all_interventions(case_id):
+    """Get all interventions for a case, sorted by timestamp"""
+    referring = st.session_state.referring_interventions.get(case_id, [])
+    emt = st.session_state.emt_interventions.get(case_id, [])
+    
+    all_interventions = referring + emt
+    return sorted(all_interventions, key=lambda x: x["timestamp"], reverse=True)
+    
 # -------------------- Enhanced Real-time Features --------------------
 def setup_real_time_listener():
     """Set up real-time event listening"""
@@ -783,7 +875,7 @@ else:
 
             st.markdown('<hr class="soft" />', unsafe_allow_html=True)
 
-            # Details row
+            # Details row - ENHANCED WITH INTERVENTION TRACKING
             d1, d2 = st.columns([2, 3])
 
             with d1:
@@ -805,7 +897,89 @@ else:
                     st.caption("No audit entries yet.")
 
             with d2:
-                # Live vitals entry + recent trend table
+                # INTERVENTION TRACKING SECTION
+                st.markdown("**🧰 Interventions & Clinical Actions**")
+                
+                # Tab interface for different intervention types
+                tab1, tab2, tab3 = st.tabs(["Referring Facility", "EMT During Transit", "All Interventions"])
+                
+                with tab1:
+                    st.markdown("**Pre-Transfer Interventions**")
+                    
+                    # Form to add referring intervention
+                    with st.form(key=f"ref_interv_{r['id']}"):
+                        col1, col2 = st.columns([2, 1])
+                        ref_intervention = col1.selectbox("Intervention", REFERRING_INTERVENTIONS, key=f"ref_sel_{r['id']}")
+                        ref_details = col2.text_input("Details/Dose", placeholder="e.g., 2L O2, 500ml NS")
+                        
+                        if st.form_submit_button("➕ Add Referring Intervention"):
+                            if ref_intervention:
+                                add_referring_intervention(r['id'], ref_intervention, ref_details)
+                                st.success(f"Added: {ref_intervention}")
+                                st.rerun()
+                    
+                    # Display referring interventions
+                    ref_interventions = st.session_state.referring_interventions.get(r['id'], [])
+                    if ref_interventions:
+                        for interv in ref_interventions:
+                            st.markdown(f"""
+                            <div class="audit">
+                                🏥 <strong>{interv['intervention']}</strong><br>
+                                <small>{interv['details']} • {fmt_ts(interv['timestamp'], short=True)}</small>
+                            </div>
+                            """, unsafe_allow_html=True)
+                    else:
+                        st.caption("No referring interventions recorded")
+                
+                with tab2:
+                    st.markdown("**EMT Interventions During Transit**")
+                    
+                    # Form to add EMT intervention
+                    with st.form(key=f"emt_interv_{r['id']}"):
+                        col1, col2, col3 = st.columns([2, 1, 1])
+                        emt_intervention = col1.selectbox("Intervention", EMT_INTERVENTIONS, key=f"emt_sel_{r['id']}")
+                        emt_details = col2.text_input("Details", placeholder="e.g., 18g IV, 250ml")
+                        emt_status = col3.selectbox("Status", INTERVENTION_STATUS, key=f"emt_stat_{r['id']}")
+                        
+                        if st.form_submit_button("➕ Add EMT Intervention"):
+                            if emt_intervention:
+                                add_emt_intervention(r['id'], emt_intervention, emt_details, emt_status)
+                                st.success(f"Added: {emt_intervention} ({emt_status})")
+                                st.rerun()
+                    
+                    # Display EMT interventions
+                    emt_interventions = st.session_state.emt_interventions.get(r['id'], [])
+                    if emt_interventions:
+                        for interv in emt_interventions:
+                            status_icon = "🟢" if interv['status'] == 'Completed' else "🟡" if interv['status'] == 'In Progress' else "⚪"
+                            st.markdown(f"""
+                            <div class="audit">
+                                🚑 {status_icon} <strong>{interv['intervention']}</strong> • {interv['status']}<br>
+                                <small>{interv['details']} • {fmt_ts(interv['timestamp'], short=True)}</small>
+                            </div>
+                            """, unsafe_allow_html=True)
+                    else:
+                        st.caption("No EMT interventions recorded")
+                
+                with tab3:
+                    st.markdown("**All Interventions Timeline**")
+                    all_interventions = get_all_interventions(r['id'])
+                    if all_interventions:
+                        for interv in all_interventions:
+                            icon = "🏥" if interv['type'] == 'referring' else "🚑"
+                            status_indicator = "• ✅" if interv['status'] == 'Completed' else "• 🔄" if interv['status'] == 'In Progress' else ""
+                            st.markdown(f"""
+                            <div class="audit">
+                                {icon} <strong>{interv['intervention']}</strong> {status_indicator}<br>
+                                <small>{interv['details']} • {fmt_ts(interv['timestamp'], short=True)}</small>
+                            </div>
+                            """, unsafe_allow_html=True)
+                    else:
+                        st.caption("No interventions recorded for this case")
+                
+                st.markdown("---")
+                
+                # Vitals section remains but enhanced
                 st.markdown("**Vitals (latest & add)**")
                 colv1, colv2, colv3 = st.columns(3)
                 v_hr = colv1.number_input("HR", 0, 250, r['triage']['hr'], key=f"vhr_{r['id']}")
@@ -841,9 +1015,7 @@ A: Latest Vitals – HR {v_hr}, SBP {v_sbp}, RR {v_rr}, SpO2 {v_spo2}, Temp {v_t
 R: {"Arrived" if r["status"] in ["ARRIVE_DEST","HANDOVER"] else "En route"} • Ambulance {r['transport'].get('ambulance','—')} • ETA {r['transport'].get('eta_min','—')} min
 """
                 st.code(isbar, language="text")
-
-            st.markdown('</div>', unsafe_allow_html=True)
-
+                
 # ---------- REAL-TIME FEED PANEL ----------
 def _ingest_events_for(case_id: str):
     """Fetch new events for case, append to buffers, raise notifications if needed."""
@@ -918,7 +1090,19 @@ if st.session_state.open_case_id:
     with feed_col2:
         st.markdown("**Event log**")
         evs = st.session_state.live_feed.get(ocid, [])
-        if not evs:
+    
+        # Also include interventions in the event log
+        emt_intervs = st.session_state.emt_interventions.get(ocid, [])
+        for interv in emt_intervs[-10:]:  # Show recent EMT interventions
+            t = fmt_ts(interv['timestamp'], short=True)
+            st.markdown(f"""
+            <div class="audit">
+                🚑 <strong>INTERVENTION</strong> • {interv['intervention']} ({interv['status']})<br>
+                <small>{interv['details']} • {t}</small>
+            </div>
+            """, unsafe_allow_html=True)
+    
+        if not evs and not emt_intervs:
             st.caption("No events yet.")
         else:
             for ev in evs[-30:]:
@@ -1089,8 +1273,7 @@ else:
             theta="Count:Q", color=alt.Color("Outcome:N", scale=alt.Scale(range=["#10b981","#ef4444"])),
             tooltip=["Outcome","Count"]
         ).properties(height=300)
-        st.altair_chart(ar_chart, use_container_width=True)
-
+        st.altair_chart(ar_chart, use_container_width=True)        
     # SLAs + breach panel
     st.markdown("**SLA Benchmarks & Breaches**")
     sla_row = st.columns(4)
@@ -1142,6 +1325,40 @@ else:
     st.markdown("**Referrals (range table)**")
     show_cols = ["id","status","triage","case_type","priority","ambulance","eta_min","first_contact"]
     st.dataframe(adf[show_cols].sort_values("first_contact", ascending=False), use_container_width=True, height=280)
+# Add intervention analytics
+st.markdown("**Intervention Analytics**")
+int_col1, int_col2 = st.columns(2)
+
+with int_col1:
+    # Most common interventions
+    all_ref_interventions = []
+    for case_id, interventions in st.session_state.referring_interventions.items():
+        all_ref_interventions.extend([i['intervention'] for i in interventions])
+    
+    if all_ref_interventions:
+        int_df = pd.DataFrame({'intervention': all_ref_interventions})
+        int_counts = int_df['intervention'].value_counts().head(10)
+        st.markdown("**Top Referring Interventions**")
+        for intervention, count in int_counts.items():
+            st.write(f"- {intervention}: {count}")
+    else:
+        st.caption("No referring intervention data")
+
+with int_col2:
+    # EMT intervention stats
+    all_emt_interventions = []
+    for case_id, interventions in st.session_state.emt_interventions.items():
+        all_emt_interventions.extend([i['intervention'] for i in interventions])
+    
+    if all_emt_interventions:
+        emt_df = pd.DataFrame({'intervention': all_emt_interventions})
+        emt_counts = emt_df['intervention'].value_counts().head(10)
+        st.markdown("**Top EMT Interventions**")
+        for intervention, count in emt_counts.items():
+            st.write(f"- {intervention}: {count}")
+    else:
+        st.caption("No EMT intervention data")    
+        
 # Enhanced export & reporting
 def generate_daily_report():
     """Generate comprehensive daily report"""
