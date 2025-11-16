@@ -388,6 +388,337 @@ else:
         "Sohra Civil Hospital": {"icu_beds": 4, "icu_available": 2},
         "Shillong Polyclinic & Trauma": {"icu_beds": 8, "icu_available": 0}
     }    
+def display_patient_details(patient):
+    """Display comprehensive patient details in a structured format"""
+    
+    with st.container():
+        st.markdown("---")
+        
+        # Header with critical info
+        col1, col2, col3 = st.columns([2, 1, 1])
+        with col1:
+            st.markdown(f"### 🏥 {patient['patient']['name']}, {patient['patient']['age']} {patient['patient']['sex']}")
+            st.markdown(f"**ID:** {patient['id']} | **Triage:** {patient['triage']['decision']['color']} | **Status:** {patient['status']}")
+        
+        with col2:
+            st.markdown(f"**Priority:** {patient['transport']['priority']}")
+            st.markdown(f"**Ambulance:** {patient['transport']['ambulance']}")
+            st.markdown(f"**ETA:** {patient['transport'].get('eta_min', '—')} min")
+        
+        with col3:
+            st.markdown(f"**Complaint:** {patient['triage']['complaint']}")
+            st.markdown(f"**Referring:** {patient['referrer']['facility']}")
+            st.markdown(f"**By:** {patient['referrer']['name']}")
+
+        # Tabbed interface for different detail sections
+        tab1, tab2, tab3, tab4, tab5 = st.tabs(["📊 Clinical Overview", "💊 Interventions", "📈 Vitals Trend", "🕒 Timeline", "📋 ISBAR Report"])
+
+        with tab1:
+            display_clinical_overview(patient)
+        
+        with tab2:
+            display_interventions(patient)
+        
+        with tab3:
+            display_vitals_trend(patient)
+        
+        with tab4:
+            display_timeline(patient)
+        
+        with tab5:
+            display_isbar_report(patient)
+# -------------------- Patient Detail Functions --------------------
+def display_patient_details(patient):
+    """Display comprehensive patient details in a structured format"""
+    
+    with st.container():
+        st.markdown("---")
+        
+        # Header with critical info
+        col1, col2, col3 = st.columns([2, 1, 1])
+        with col1:
+            st.markdown(f"### 🏥 {patient['patient']['name']}, {patient['patient']['age']} {patient['patient']['sex']}")
+            st.markdown(f"**ID:** {patient['id']} | **Triage:** {patient['triage']['decision']['color']} | **Status:** {patient['status']}")
+        
+        with col2:
+            st.markdown(f"**Priority:** {patient['transport']['priority']}")
+            st.markdown(f"**Ambulance:** {patient['transport']['ambulance']}")
+            st.markdown(f"**ETA:** {patient['transport'].get('eta_min', '—')} min")
+        
+        with col3:
+            st.markdown(f"**Complaint:** {patient['triage']['complaint']}")
+            st.markdown(f"**Referring:** {patient['referrer']['facility']}")
+            st.markdown(f"**By:** {patient['referrer']['name']}")
+
+        # Tabbed interface for different detail sections
+        tab1, tab2, tab3, tab4, tab5 = st.tabs(["📊 Clinical Overview", "💊 Interventions", "📈 Vitals Trend", "🕒 Timeline", "📋 ISBAR Report"])
+
+        with tab1:
+            display_clinical_overview(patient)
+        
+        with tab2:
+            display_interventions(patient)
+        
+        with tab3:
+            display_vitals_trend(patient)
+        
+        with tab4:
+            display_timeline(patient)
+        
+        with tab5:
+            display_isbar_report(patient)
+
+def display_clinical_overview(patient):
+    """Display clinical overview with current status and actions"""
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.markdown("#### Current Vitals")
+        v1, v2, v3, v4 = st.columns(4)
+        v1.metric("HR", f"{patient['triage']['hr']} bpm")
+        v2.metric("BP", f"{patient['triage']['sbp']} mmHg")
+        v3.metric("SpO2", f"{patient['triage']['spo2']}%")
+        v4.metric("Temp", f"{patient['triage']['temp']}°C")
+        
+        st.markdown("#### Clinical Actions")
+        action_col1, action_col2, action_col3, action_col4 = st.columns(4)
+        
+        if action_col1.button("✅ Accept", key=f"accept_{patient['id']}", use_container_width=True):
+            patient["status"] = "ACCEPTED"
+            auto_save()
+            st.rerun()
+            
+        if action_col2.button("🚗 En Route", key=f"enroute_{patient['id']}", use_container_width=True):
+            patient["status"] = "ENROUTE"
+            auto_save()
+            st.rerun()
+            
+        if action_col3.button("🏥 Arrived", key=f"arrived_{patient['id']}", use_container_width=True):
+            patient["status"] = "ARRIVE_DEST"
+            auto_save()
+            st.rerun()
+            
+        if action_col4.button("👥 Handover", key=f"handover_{patient['id']}", use_container_width=True):
+            patient["status"] = "HANDOVER"
+            auto_save()
+            st.rerun()
+
+    with col2:
+        st.markdown("#### Provisional Diagnosis")
+        st.info(patient['provisionalDx'].get('label', 'No diagnosis provided'))
+        
+        st.markdown("#### Critical Alerts")
+        # Check for critical values
+        alerts = []
+        if patient['triage']['hr'] > 130 or patient['triage']['hr'] < 50:
+            alerts.append("🚨 Critical Heart Rate")
+        if patient['triage']['sbp'] < 90:
+            alerts.append("🚨 Hypotension")
+        if patient['triage']['spo2'] < 92:
+            alerts.append("🚨 Hypoxia")
+        if patient['triage']['avpu'] != 'A':
+            alerts.append("🚨 Altered Consciousness")
+            
+        if alerts:
+            for alert in alerts:
+                st.error(alert)
+        else:
+            st.success("✅ No critical alerts")
+# -------------------- Patient Detail Functions --------------------
+def display_patient_details(patient):
+    """Display comprehensive patient details in a structured format"""
+    
+    with st.container():
+        st.markdown("---")
+        
+        # Header with critical info
+        col1, col2, col3 = st.columns([2, 1, 1])
+        with col1:
+            st.markdown(f"### 🏥 {patient['patient']['name']}, {patient['patient']['age']} {patient['patient']['sex']}")
+            st.markdown(f"**ID:** {patient['id']} | **Triage:** {patient['triage']['decision']['color']} | **Status:** {patient['status']}")
+        
+        with col2:
+            st.markdown(f"**Priority:** {patient['transport']['priority']}")
+            st.markdown(f"**Ambulance:** {patient['transport']['ambulance']}")
+            st.markdown(f"**ETA:** {patient['transport'].get('eta_min', '—')} min")
+        
+        with col3:
+            st.markdown(f"**Complaint:** {patient['triage']['complaint']}")
+            st.markdown(f"**Referring:** {patient['referrer']['facility']}")
+            st.markdown(f"**By:** {patient['referrer']['name']}")
+
+        # Tabbed interface for different detail sections
+        tab1, tab2, tab3, tab4, tab5 = st.tabs(["📊 Clinical Overview", "💊 Interventions", "📈 Vitals Trend", "🕒 Timeline", "📋 ISBAR Report"])
+
+        with tab1:
+            display_clinical_overview(patient)
+        
+        with tab2:
+            display_interventions(patient)
+        
+        with tab3:
+            display_vitals_trend(patient)
+        
+        with tab4:
+            display_timeline(patient)
+        
+        with tab5:
+            display_isbar_report(patient)
+
+def display_clinical_overview(patient):
+    """Display clinical overview with current status and actions"""
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.markdown("#### Current Vitals")
+        v1, v2, v3, v4 = st.columns(4)
+        v1.metric("HR", f"{patient['triage']['hr']} bpm")
+        v2.metric("BP", f"{patient['triage']['sbp']} mmHg")
+        v3.metric("SpO2", f"{patient['triage']['spo2']}%")
+        v4.metric("Temp", f"{patient['triage']['temp']}°C")
+        
+        st.markdown("#### Clinical Actions")
+        action_col1, action_col2, action_col3, action_col4 = st.columns(4)
+        
+        if action_col1.button("✅ Accept", key=f"accept_{patient['id']}", use_container_width=True):
+            patient["status"] = "ACCEPTED"
+            auto_save()
+            st.rerun()
+            
+        if action_col2.button("🚗 En Route", key=f"enroute_{patient['id']}", use_container_width=True):
+            patient["status"] = "ENROUTE"
+            auto_save()
+            st.rerun()
+            
+        if action_col3.button("🏥 Arrived", key=f"arrived_{patient['id']}", use_container_width=True):
+            patient["status"] = "ARRIVE_DEST"
+            auto_save()
+            st.rerun()
+            
+        if action_col4.button("👥 Handover", key=f"handover_{patient['id']}", use_container_width=True):
+            patient["status"] = "HANDOVER"
+            auto_save()
+            st.rerun()
+
+    with col2:
+        st.markdown("#### Provisional Diagnosis")
+        st.info(patient['provisionalDx'].get('label', 'No diagnosis provided'))
+        
+        st.markdown("#### Critical Alerts")
+        # Check for critical values
+        alerts = []
+        if patient['triage']['hr'] > 130 or patient['triage']['hr'] < 50:
+            alerts.append("🚨 Critical Heart Rate")
+        if patient['triage']['sbp'] < 90:
+            alerts.append("🚨 Hypotension")
+        if patient['triage']['spo2'] < 92:
+            alerts.append("🚨 Hypoxia")
+        if patient['triage']['avpu'] != 'A':
+            alerts.append("🚨 Altered Consciousness")
+            
+        if alerts:
+            for alert in alerts:
+                st.error(alert)
+        else:
+            st.success("✅ No critical alerts")
+def get_time_ago(timestamp):
+    """Calculate how long ago an event occurred"""
+    if not timestamp:
+        return "—"
+    
+    now = time.time()
+    diff = now - timestamp
+    
+    if diff < 60:
+        return "Just now"
+    elif diff < 3600:
+        return f"{int(diff/60)} min ago"
+    elif diff < 86400:
+        return f"{int(diff/3600)} hours ago"
+    else:
+        return f"{int(diff/86400)} days ago"
+
+def display_vitals_trend(patient):
+    """Display vitals trend chart"""
+    if patient.get("vitals_history"):
+        vitals_df = pd.DataFrame(patient["vitals_history"])
+        vitals_df["time"] = pd.to_datetime(vitals_df["timestamp"], unit='s').dt.strftime("%H:%M")
+        
+        st.line_chart(vitals_df.set_index("time")[["hr", "sbp", "spo2"]])
+    else:
+        st.info("No vitals history available")
+
+def display_timeline(patient):
+    """Display detailed timeline"""
+    times = patient["times"]
+    
+    timeline_data = []
+    for event, timestamp in times.items():
+        if timestamp:
+            timeline_data.append({
+                "Event": event.replace("_ts", "").replace("_", " ").title(),
+                "Timestamp": fmt_ts(timestamp),
+                "Time Ago": get_time_ago(timestamp)
+            })
+    
+    if timeline_data:
+        st.table(pd.DataFrame(timeline_data))
+    else:
+        st.info("No timeline data available")
+
+def display_isbar_report(patient):
+    """Generate comprehensive ISBAR report"""
+    isbar_report = f"""
+**IDENTIFICATION**
+- Patient: {patient['patient']['name']}, {patient['patient']['age']} {patient['patient']['sex']}
+- ID: {patient['patient']['id']}
+- Case ID: {patient['id']}
+
+**SITUATION**
+- Chief Complaint: {patient['triage']['complaint']}
+- Triage Level: {patient['triage']['decision']['color']}
+- Priority: {patient['transport']['priority']}
+- Current Status: {patient['status']}
+
+**BACKGROUND**
+- Referring Facility: {patient['referrer']['facility']}
+- Referring Clinician: {patient['referrer']['name']} ({patient['referrer']['role']})
+- Provisional Diagnosis: {patient['provisionalDx'].get('label', 'Not specified')}
+
+**ASSESSMENT**
+- Latest Vitals: HR {patient['triage']['hr']}, BP {patient['triage']['sbp']}, 
+  RR {patient['triage']['rr']}, SpO2 {patient['triage']['spo2']}%, Temp {patient['triage']['temp']}°C
+- AVPU: {patient['triage']['avpu']}
+- Ambulance: {patient['transport']['ambulance']}
+- ETA: {patient['transport'].get('eta_min', '—')} minutes
+
+**RECOMMENDATION**
+- Handoff Priority: {'HIGH' if patient['triage']['decision']['color'] == 'RED' else 'MEDIUM'}
+"""
+    st.markdown(isbar_report)
+
+# Add these placeholder functions for ISBAR report
+def get_required_resources(patient):
+    """Determine required resources based on patient condition"""
+    if patient['triage']['decision']['color'] == 'RED':
+        return "ICU bed, Cardiac monitor, Emergency team"
+    elif patient['triage']['decision']['color'] == 'YELLOW':
+        return "ED bed, Monitoring equipment"
+    else:
+        return "General ward bed"
+
+def get_special_considerations(patient):
+    """Get special considerations for handoff"""
+    considerations = []
+    if patient['triage']['complaint'] == 'Cardiac':
+        considerations.append("Cardiac monitor required")
+    if patient['triage']['complaint'] == 'Trauma':
+        considerations.append("Trauma team alert")
+    if patient['triage']['spo2'] < 92:
+        considerations.append("Oxygen therapy needed")
+    return ", ".join(considerations) if considerations else "Standard care"            
 # -------------------- Synthetic Data --------------------
 FACILITY_POOL = [
     "NEIGRIHMS", "Civil Hospital Shillong", "Nazareth Hospital",
@@ -910,176 +1241,95 @@ with k6: st.markdown(f'<div class="kpi"><div class="label">ICU Beds Available</d
 
 st.markdown('<hr class="soft" />', unsafe_allow_html=True)
 
-# -------------------- Work Queue (today only for operations) --------------------
-st.subheader("Incoming Queue & Ongoing Receiving (today)")
-today = datetime.now().date()
-today_refs = [r for r in refs if r["times"].get("first_contact_ts") and datetime.fromtimestamp(r["times"]["first_contact_ts"]).date() == today]
+# -------------------- Professional Patient Dashboard --------------------
+st.subheader("📋 Incoming Patient Summary")
 
-priority_rank = {"STAT":0, "Urgent":1, "Routine":2}
-status_rank = {"PREALERT":0, "ACCEPTED":1, "ENROUTE":2, "ARRIVE_DEST":3, "HANDOVER":4, "REJECTED":5}
+# Summary KPIs for today
+today_stats_col1, today_stats_col2, today_stats_col3, today_stats_col4 = st.columns(4)
+with today_stats_col1:
+    st.metric("Total Today", len(today_refs))
+with today_stats_col2:
+    st.metric("Awaiting", len([r for r in today_refs if r["status"] in ["PREALERT", "ACCEPTED"]]))
+with today_stats_col3:
+    st.metric("In Transit", len([r for r in today_refs if r["status"] == "ENROUTE"]))
+with today_stats_col4:
+    st.metric("Arrived", len([r for r in today_refs if r["status"] in ["ARRIVE_DEST", "HANDOVER"]]))
 
-queue = sorted(
-    [r for r in today_refs if r["status"] in ["PREALERT","ACCEPTED","ENROUTE","ARRIVE_DEST"]],
-    key=lambda x: (status_rank.get(x["status"],9), priority_rank.get(x["transport"].get("priority","Urgent"),1), -x["times"].get("decision_ts", 0))
-)
-
-# Quick create (simulate a new pre-alert)
-with st.expander("🧪 Simulate a new pre-alert (for testing)"):
-    sim_col1, sim_col2, sim_col3, sim_col4 = st.columns(4)
-    compl_new = sim_col1.selectbox("Case", COMPLAINTS, index=0, key="sim_case")
-    tri_new = sim_col2.selectbox("Triage", TRIAGE, index=0, key="sim_tri")
-    pr_new = sim_col3.selectbox("Priority", PRIORITY, index=1, key="sim_pr")
-    amb_new = sim_col4.selectbox("Ambulance", AMB_TYPES, index=1, key="sim_amb")
-    if st.button("➕ Add pre-alert now"):
-        rng = random.Random(int(now_ts()))
-        day_epoch = datetime.combine(today, datetime.min.time()).timestamp()
-        r = _seed_one(rng, day_epoch, facility)
-        r["status"] = "PREALERT"
-        r["triage"]["decision"]["color"] = tri_new
-        r["triage"]["complaint"] = compl_new
-        r["transport"]["priority"] = pr_new
-        r["transport"]["ambulance"] = amb_new
-        st.session_state.referrals_all.insert(0, r)
-        if st.session_state.notify_rules["RED_only"] and tri_new == "RED":
-            # FIXED: Updated push_notification call
-            push_notification("Critical pre-alert", f"{compl_new} • {tri_new} • Priority {pr_new}", r["id"], "high")
-        st.success("Pre-alert added")
+# Filter and search controls
+filter_col1, filter_col2, filter_col3, filter_col4 = st.columns([2, 2, 2, 1])
+with filter_col1:
+    status_filter = st.multiselect("Status", ["PREALERT", "ACCEPTED", "ENROUTE", "ARRIVE_DEST", "HANDOVER", "REJECTED"], default=["PREALERT", "ACCEPTED", "ENROUTE"])
+with filter_col2:
+    triage_filter = st.multiselect("Triage", ["RED", "YELLOW", "GREEN"], default=["RED", "YELLOW", "GREEN"])
+with filter_col3:
+    search_term = st.text_input("Search Patient/ID")
+with filter_col4:
+    st.markdown("")  # Spacer
+    if st.button("Refresh", key="refresh_table"):
         st.rerun()
 
-if not queue:
-    st.info("No active or awaiting referrals for today.")
+# Filter the queue
+filtered_queue = [r for r in queue if r["status"] in status_filter and r["triage"]["decision"]["color"] in triage_filter]
+if search_term:
+    filtered_queue = [r for r in filtered_queue if search_term.lower() in r["patient"]["name"].lower() or search_term.lower() in r["id"].lower()]
+
+# Patient Data Table
+if not filtered_queue:
+    st.info("No patients match the current filters.")
 else:
-    for r in queue:
-        with st.container():
-            # === ENHANCED HEADER ===
-            triage_color = r["triage"]["decision"]["color"]
-            bg_color = "#dc2626" if triage_color == "RED" else "#d97706" if triage_color == "YELLOW" else "#059669"
+    # Create dataframe for the table
+    table_data = []
+    for r in filtered_queue:
+        table_data.append({
+            "ID": r["id"],
+            "Patient": f"{r['patient']['name']}, {r['patient']['age']}{r['patient']['sex'][0]}",
+            "Triage": r["triage"]["decision"]["color"],
+            "Complaint": r["triage"]["complaint"],
+            "Status": r["status"],
+            "Priority": r["transport"]["priority"],
+            "ETA": f"{r['transport'].get('eta_min', '—')} min",
+            "Referring Facility": r["referrer"]["facility"],
+            "Time Since Alert": get_time_ago(r["times"].get("first_contact_ts"))
+        })
+    
+    df_table = pd.DataFrame(table_data)
+    
+    # Display the table with custom styling
+    st.dataframe(
+        df_table,
+        use_container_width=True,
+        height=400,
+        column_config={
+            "Triage": st.column_config.TextColumn(
+                "Triage",
+                help="Patient triage level",
+                width="small"
+            ),
+            "Status": st.column_config.TextColumn(
+                "Status", 
+                width="medium"
+            ),
+            "ETA": st.column_config.TextColumn(
+                "ETA",
+                width="small"
+            )
+        }
+    )
+    
+    # Patient selection for details
+    st.subheader("👨‍⚕️ Patient Details")
+    selected_patient = st.selectbox(
+        "Select patient for detailed view:",
+        options=[f"{r['id']} - {r['patient']['name']}" for r in filtered_queue],
+        key="patient_selector"
+    )
+    
+    if selected_patient:
+        selected_id = selected_patient.split(" - ")[0]
+        selected_case = next((r for r in filtered_queue if r["id"] == selected_id), None)
         
-        st.markdown(f"""
-        <div style="background: {bg_color}; padding: 8px; border-radius: 8px; margin-bottom: 8px;">
-            <div style="color: white; font-weight: bold; display: flex; justify-content: space-between;">
-                <span>{r['patient']['name']}, {r['patient']['age']} {r['patient']['sex']}</span>
-                <span>{triage_color} • {r['transport']['priority']}</span>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-        
-        st.caption(f"🚑 From {r['referrer']['facility']} • {r['triage']['complaint']}")
-
-        # === QUICK ACTIONS ROW ===
-        col1, col2, col3, col4, col5 = st.columns(5)
-        
-        if col1.button("✅ Accept", key=f"acc_{r['id']}", use_container_width=True):
-            r["status"] = "ACCEPTED"
-            auto_save()
-            st.rerun()
-            
-        if col2.button("🚗 En Route", key=f"enr_{r['id']}", use_container_width=True):
-            r["status"] = "ENROUTE"
-            auto_save()
-            st.rerun()
-            
-        if col3.button("🏥 Arrived", key=f"arr_{r['id']}", use_container_width=True):
-            r["status"] = "ARRIVE_DEST"
-            auto_save()
-            st.rerun()
-            
-        if col4.button("👥 Handover", key=f"hov_{r['id']}", use_container_width=True):
-            r["status"] = "HANDOVER"
-            auto_save()
-            st.rerun()
-
-        # === QUICK INTERVENTIONS ===
-        with col5:
-            with st.popover("🩺 Quick Actions"):
-                if st.button("💉 IV Access", key=f"iv_{r['id']}"):
-                    if "interventions" not in st.session_state:
-                        st.session_state.interventions = {}
-                    if r['id'] not in st.session_state.interventions:
-                        st.session_state.interventions[r['id']] = []
-                    st.session_state.interventions[r['id']].append({
-                        "intervention": "IV Access", "details": "18G left AC", "type": "emt", "timestamp": time.time()
-                    })
-                    auto_save()
-                    st.success("IV Access recorded")
-                    
-                if st.button("💊 Meds Given", key=f"meds_{r['id']}"): 
-                    if "interventions" not in st.session_state:
-                        st.session_state.interventions = {}
-                    if r['id'] not in st.session_state.interventions:
-                        st.session_state.interventions[r['id']] = []
-                    st.session_state.interventions[r['id']].append({
-                        "intervention": "Medication", "details": "As per protocol", "type": "emt", "timestamp": time.time()
-                    })
-                    auto_save()
-                    st.success("Medication recorded")
-                    
-                if st.button("🫁 O2 Therapy", key=f"o2_{r['id']}"):
-                    if "interventions" not in st.session_state:
-                        st.session_state.interventions = {}
-                    if r['id'] not in st.session_state.interventions:
-                        st.session_state.interventions[r['id']] = []
-                    st.session_state.interventions[r['id']].append({
-                        "intervention": "Oxygen Therapy", "details": "2L nasal cannula", "type": "emt", "timestamp": time.time()
-                    })
-                    auto_save()
-                    st.success("Oxygen therapy recorded")
-
-        # === VITALS WITH ALERTS ===
-        st.markdown("**Vitals**")
-        v1, v2, v3, v4, v5, v6 = st.columns(6)
-        hr = v1.number_input("HR", 60, 150, r['triage']['hr'], key=f"hr_{r['id']}")
-        sbp = v2.number_input("SBP", 80, 200, r['triage']['sbp'], key=f"sbp_{r['id']}")
-        spo2 = v3.number_input("SpO2", 85, 100, r['triage']['spo2'], key=f"spo2_{r['id']}")
-        rr = v4.number_input("RR", 12, 35, r['triage']['rr'], key=f"rr_{r['id']}")
-        temp = v5.number_input("Temp", 36.0, 40.0, r['triage']['temp'], key=f"temp_{r['id']}")
-        avpu = v6.selectbox("AVPU", ["A", "V", "P", "U"], index=0, key=f"avpu_{r['id']}")
-        
-        # Critical value alerts
-        if hr > 130 or hr < 50:
-            v1.error("🚨")
-        if sbp < 90:
-            v2.error("🚨") 
-        if spo2 < 92:
-            v3.error("🚨")
-        if avpu != 'A':
-            v6.error("🚨")
-
-        # === SHOW RECENT INTERVENTIONS ===
-        if "interventions" in st.session_state and r['id'] in st.session_state.interventions:
-            st.markdown("**Recent Actions**")
-            for iv in st.session_state.interventions[r['id']][-2:]:
-                st.caption(f"🚑 {iv['intervention']} - {iv['details']}")
-
-        # === TIMELINE AND AUDIT ===
-        st.markdown("**Timeline**")
-        tl = r["times"]
-        st.write(f"- First contact: {fmt_ts(tl.get('first_contact_ts'))}")
-        st.write(f"- Decision: {fmt_ts(tl.get('decision_ts'))}")
-        st.write(f"- Dispatch: {fmt_ts(tl.get('dispatch_ts'))}")
-        st.write(f"- En route: {fmt_ts(tl.get('enroute_ts'))}")
-        st.write(f"- Arrive dest: {fmt_ts(tl.get('arrive_dest_ts'))}")
-        st.write(f"- Handover: {fmt_ts(tl.get('handover_ts'))}")
-
-        st.markdown("**Audit**")
-        if r.get("audit_log"):
-            for a in r["audit_log"]:
-                txt = f"{a['ts']} • {a['action']}" + (f" • {a.get('reason','')}" if a.get("reason") else "")
-                st.markdown(f'<div class="audit">{txt}</div>', unsafe_allow_html=True)
-        else:
-            st.caption("No audit entries yet.")
-
-        # === ISBAR SECTION ===
-        st.markdown("**ISBAR (auto)**")
-        isbar = f"""I: {r['patient']['name']}, {r['patient']['age']}{r['patient']['sex']} • {r['id']}
-S: {r['triage']['complaint']} • Triage {r['triage']['decision']['color']} • Priority {r['transport'].get('priority','Urgent')}
-B: Referred from {r['referrer']['facility']} by {r['referrer']['name']} ({r['referrer']['role']}) • Dx: {r['provisionalDx'].get('label','—')}
-A: Latest Vitals – HR {hr}, SBP {sbp}, RR {rr}, SpO2 {spo2}, Temp {temp}°C, AVPU {avpu}
-R: {"Arrived" if r["status"] in ["ARRIVE_DEST","HANDOVER"] else "En route"} • Ambulance {r['transport'].get('ambulance','—')} • ETA {r['transport'].get('eta_min','—')} min
-"""
-        st.code(isbar, language="text")
-
-        st.markdown('</div>', unsafe_allow_html=True)
+        if selected_case:
+            display_patient_details(selected_case)
                 
 # ---------- REAL-TIME FEED PANEL ----------
 def _ingest_events_for(case_id: str):
@@ -1260,185 +1510,80 @@ def calculate_median_times(df):
         "dispatch_to_arrival": median(df["dispatch_to_arrival_min"].dropna()) if not df["dispatch_to_arrival_min"].dropna().empty else 0,
         "arrival_to_handover": median(df["arrival_to_handover_min"].dropna()) if not df["arrival_to_handover_min"].dropna().empty else 0
     }                         
-# -------------------- Advanced Analytics (date range) --------------------
-st.subheader("Analytics – Date Range")
+# -------------------- Comprehensive Analytics Dashboard --------------------
+st.subheader("📊 Hospital Performance Analytics")
 
-if adf.empty:
-    st.info("No data in the selected date range.")
-else:
-    # Calendar heatmap (referrals per day)
-    cal = adf.copy()
-    cal["date"] = pd.to_datetime(cal["first_contact"]).dt.date
-    cal_day = pd.DataFrame(cal.groupby("date").size()).reset_index()
-    cal_day.columns = ["date","count"]
-    # Build weekday x weeknumber grid for a calendar-like view
-    cal_day["weekday"] = pd.to_datetime(cal_day["date"]).dt.weekday
-    cal_day["week"] = pd.to_datetime(cal_day["date"]).dt.isocalendar().week
+analytics_tab1, analytics_tab2, analytics_tab3, analytics_tab4 = st.tabs(["Overview", "Clinical Metrics", "Operational Efficiency", "Resource Utilization"])
 
-    c1, c2 = st.columns(2)
-    with c1:
-        st.markdown("**Calendar Heatmap (cases/day)**")
-        cal_chart = alt.Chart(cal_day).mark_rect().encode(
-            x=alt.X('week:O', title='ISO Week'),
-            y=alt.Y('weekday:O', title='Weekday', sort=[0,1,2,3,4,5,6]),
-            color=alt.Color('count:Q', scale=alt.Scale(scheme='blues')),
-            tooltip=['date:T','count:Q']
-        ).properties(height=300)
-        st.altair_chart(cal_chart, use_container_width=True)
+with analytics_tab1:
+    col1, col2 = st.columns(2)
+    with col1:
+        # Triage distribution
+        st.markdown("**Triage Distribution**")
+        triage_data = adf['triage'].value_counts()
+        st.bar_chart(triage_data)
+    
+    with col2:
+        # Status distribution
+        st.markdown("**Case Status Distribution**")
+        status_data = adf['status'].value_counts()
+        st.bar_chart(status_data)
 
-    with c2:
-        st.markdown("**Hourly Flow (first contact)**")
-        hourly = adf.copy()
-        hourly["hour"] = pd.to_datetime(hourly["first_contact"]).dt.hour
-        h = hourly.groupby("hour").size().reset_index(name="count")
-        hchart = alt.Chart(h).mark_bar().encode(
-            x=alt.X("hour:O", title="Hour"), y=alt.Y("count:Q", title="Referrals"),
-            tooltip=["hour","count"]
-        ).properties(height=300)
-        st.altair_chart(hchart, use_container_width=True)
+with analytics_tab2:
+    col1, col2 = st.columns(2)
+    with col1:
+        # Case types by triage
+        st.markdown("**Case Types by Triage Level**")
+        case_triage = pd.crosstab(adf['case_type'], adf['triage'])
+        st.bar_chart(case_triage)
+    
+    with col2:
+        # Time-based analysis
+        st.markdown("**Referrals by Hour of Day**")
+        adf['hour'] = pd.to_datetime(adf['first_contact']).dt.hour
+        hourly_counts = adf['hour'].value_counts().sort_index()
+        st.line_chart(hourly_counts)
 
-    row2 = st.columns(2)
-    with row2[0]:
-        st.markdown("**Triage Mix (pie)**")
-        tri = adf.groupby("triage").size().reset_index(name="count")
-        tri_chart = alt.Chart(tri).mark_arc(innerRadius=50).encode(
-            theta="count:Q", color=alt.Color("triage:N", scale=alt.Scale(domain=["RED","YELLOW","GREEN"], range=["#ef4444","#f59e0b","#10b981"])),
-            tooltip=["triage","count"]
-        ).properties(height=320)
-        st.altair_chart(tri_chart, use_container_width=True)
+with analytics_tab3:
+    # SLA Performance
+    st.markdown("**SLA Performance Metrics**")
+    sla_col1, sla_col2, sla_col3 = st.columns(3)
+    
+    with sla_col1:
+        median_dispatch = adf['decision_to_dispatch_min'].median()
+        st.metric("Decision to Dispatch", f"{median_dispatch:.1f} min")
+    
+    with sla_col2:
+        median_transport = adf['dispatch_to_arrival_min'].median()
+        st.metric("Transport Time", f"{median_transport:.1f} min")
+    
+    with sla_col3:
+        acceptance_rate = (len(adf[adf['status'] != 'REJECTED']) / len(adf)) * 100
+        st.metric("Acceptance Rate", f"{acceptance_rate:.1f}%")
 
-    with row2[1]:
-        st.markdown("**Case Types (bar)**")
-        ctypes = adf.groupby("case_type").size().reset_index(name="count").sort_values("count", ascending=False)
-        case_chart = alt.Chart(ctypes).mark_bar().encode(
-            x=alt.X("count:Q", title="Cases"), y=alt.Y("case_type:N", sort="-x", title=""),
-            tooltip=["case_type","count"]
-        ).properties(height=320)
-        st.altair_chart(case_chart, use_container_width=True)
-
-    row3 = st.columns(2)
-    with row3[0]:
-        st.markdown("**Transport Times by Ambulance (boxplot)**")
-        tdf = adf[~adf["dispatch_to_arrival_min"].isna()]
-        if not tdf.empty:
-            box = alt.Chart(tdf).mark_boxplot().encode(
-                x=alt.X("ambulance:N", title="Ambulance"), y=alt.Y("dispatch_to_arrival_min:Q", title="Minutes"),
-                color="ambulance:N", tooltip=["ambulance","dispatch_to_arrival_min"]
-            ).properties(height=300)
-            st.altair_chart(box, use_container_width=True)
+with analytics_tab4:
+    # Resource utilization
+    st.markdown("**Resource Utilization**")
+    
+    # ICU bed utilization
+    icu_demand = len(adf[(adf['triage'] == 'RED') & (adf['status'].isin(['ACCEPTED', 'ENROUTE', 'ARRIVE_DEST', 'HANDOVER']))])
+    icu_available = st.session_state.resources[facility]['icu_available']
+    icu_utilization = (icu_demand / (icu_demand + icu_available)) * 100 if (icu_demand + icu_available) > 0 else 0
+    
+    util_col1, util_col2 = st.columns(2)
+    with util_col1:
+        st.metric("ICU Beds Demand", icu_demand)
+        st.metric("ICU Beds Available", icu_available)
+    with util_col2:
+        st.metric("ICU Utilization", f"{icu_utilization:.1f}%")
+        
+        # Utilization gauge
+        if icu_utilization > 80:
+            st.error("🚨 High ICU Utilization")
+        elif icu_utilization > 60:
+            st.warning("⚠️ Moderate ICU Utilization")
         else:
-            st.caption("No completed dispatch→arrival intervals.")
-
-    with row3[1]:
-        st.markdown("**Acceptance vs Rejection (pie)**")
-    
-        # Calculate acceptance/rejection from the current data
-        accepted_count = len(adf[~adf["status"].isin(["REJECTED"])])
-        rejected_count = len(adf[adf["status"] == "REJECTED"])
-    
-        accept_rej = pd.DataFrame({
-            "Outcome":["Accepted/Progressed","Rejected"],
-            "Count":[accepted_count, rejected_count]
-    })
-    
-        ar_chart = alt.Chart(accept_rej).mark_arc(innerRadius=50).encode(
-            theta="Count:Q", color=alt.Color("Outcome:N", scale=alt.Scale(range=["#10b981","#ef4444"])),
-            tooltip=["Outcome","Count"]
-    ).properties(height=300)
-        st.altair_chart(ar_chart, use_container_width=True)        
-    # SLAs + breach panel
-    st.markdown("**SLA Benchmarks & Breaches**")
-    sla_row = st.columns(4)
-    dd = adf["decision_to_dispatch_min"].dropna()
-    da = adf["dispatch_to_arrival_min"].dropna()
-    ah = adf["arrival_to_handover_min"].dropna()
-    with sla_row[0]:
-        st.markdown(f'<div class="kpi"><div class="label">Decision→Dispatch (median)</div><div class="value">{(median(dd) if len(dd)>0 else 0):.1f} min</div></div>', unsafe_allow_html=True)
-    with sla_row[1]:
-        st.markdown(f'<div class="kpi"><div class="label">Dispatch→Arrival (median)</div><div class="value">{(median(da) if len(da)>0 else 0):.1f} min</div></div>', unsafe_allow_html=True)
-    with sla_row[2]:
-        st.markdown(f'<div class="kpi"><div class="label">Arrival→Handover (median)</div><div class="value">{(median(ah) if len(ah)>0 else 0):.1f} min</div></div>', unsafe_allow_html=True)
-    with sla_row[3]:
-        red_share = (100.0 * (adf["triage"].eq("RED").sum()) / len(adf)) if len(adf) else 0
-        st.markdown(f'<div class="kpi"><div class="label">Critical Load (RED)</div><div class="value">{red_share:.0f}%</div></div>', unsafe_allow_html=True)
-
-    # Breach thresholds (tweakable)
-    b1, b2, b3 = st.columns(3)
-    thr_dd = b1.number_input("SLA: Decision→Dispatch (min)", min_value=1, max_value=120, value=15)
-    thr_da = b2.number_input("SLA: Dispatch→Arrival (min)", min_value=1, max_value=240, value=60)
-    thr_ah = b3.number_input("SLA: Arrival→Handover (min)", min_value=1, max_value=180, value=30)
-
-    def breach_df(df, col, thr):
-        if df.empty or col not in df: return pd.DataFrame()
-        x = df[[col, "id", "triage", "case_type", "priority"]].dropna()
-        return x[x[col] > thr].sort_values(col, ascending=False)
-
-    breaches = {
-        "Decision→Dispatch": breach_df(adf, "decision_to_dispatch_min", thr_dd),
-        "Dispatch→Arrival": breach_df(adf, "dispatch_to_arrival_min", thr_da),
-        "Arrival→Handover": breach_df(adf, "arrival_to_handover_min", thr_ah),
-    }
-    for label, bdf in breaches.items():
-        with st.expander(f"⚠️ Breaches – {label} ({len(bdf)})", expanded=False):
-            if len(bdf)==0:
-                st.caption("None")
-            else:
-                st.dataframe(bdf, use_container_width=True, height=220)
-
-    # ICU demand proxy
-    st.markdown("**ICU Demand vs Open Beds (proxy)**")
-    icu_demand = int(adf[(adf["triage"]=="RED") & adf["status"].isin(["ACCEPTED","ENROUTE","ARRIVE_DEST","HANDOVER"])].shape[0])
-    icu_open = st.session_state.resources[facility]["icu_available"]
-    icu_total = st.session_state.resources[facility]["icu_beds"]
-    idf = pd.DataFrame({
-        "Metric":["ICU Demand (RED active)", f"ICU Open Beds ({icu_open}/{icu_total})"], 
-        "Value":[icu_demand, icu_open]
-    })
-    bar = alt.Chart(idf).mark_bar().encode(
-        x=alt.X("Metric:N", sort=None), 
-        y="Value:Q", 
-        color="Metric:N", 
-        tooltip=["Metric","Value"]
-    ).properties(height=300)
-    st.altair_chart(bar, use_container_width=True)
-
-    # Range table & export
-    st.markdown("**Referrals (range table)**")
-    show_cols = ["id","status","triage","case_type","priority","ambulance","eta_min","first_contact"]
-    st.dataframe(adf[show_cols].sort_values("first_contact", ascending=False), use_container_width=True, height=280)
-# Add intervention analytics
-st.markdown("**Intervention Analytics**")
-int_col1, int_col2 = st.columns(2)
-
-with int_col1:
-    # Most common interventions
-    all_ref_interventions = []
-    for case_id, interventions in st.session_state.referring_interventions.items():
-        all_ref_interventions.extend([i['intervention'] for i in interventions])
-    
-    if all_ref_interventions:
-        int_df = pd.DataFrame({'intervention': all_ref_interventions})
-        int_counts = int_df['intervention'].value_counts().head(10)
-        st.markdown("**Top Referring Interventions**")
-        for intervention, count in int_counts.items():
-            st.write(f"- {intervention}: {count}")
-    else:
-        st.caption("No referring intervention data")
-
-with int_col2:
-    # EMT intervention stats
-    all_emt_interventions = []
-    for case_id, interventions in st.session_state.emt_interventions.items():
-        all_emt_interventions.extend([i['intervention'] for i in interventions])
-    
-    if all_emt_interventions:
-        emt_df = pd.DataFrame({'intervention': all_emt_interventions})
-        emt_counts = emt_df['intervention'].value_counts().head(10)
-        st.markdown("**Top EMT Interventions**")
-        for intervention, count in emt_counts.items():
-            st.write(f"- {intervention}: {count}")
-    else:
-        st.caption("No EMT intervention data")    
+            st.success("✅ Normal ICU Utilization")  
         
 # Enhanced export & reporting
 def generate_daily_report():
