@@ -293,7 +293,13 @@ if "user" not in st.session_state:
         "role": "Emergency Physician",
         "facility": "NEIGRIHMS"
     }
-
+# -------------------- Data Initialization --------------------
+# Ensure we have data to display
+if "data_initialized" not in st.session_state:
+    # Load or create demo data
+    if not st.session_state.referrals_all:
+        st.session_state.referrals_all = seed_referrals_range(days=7, seed=2025)
+    st.session_state.data_initialized = True
 # -------------------- Utilities --------------------
 def now_ts() -> float: return time.time()
 def fmt_ts(ts: float, short=False) -> str:
@@ -427,6 +433,154 @@ def display_patient_details(patient):
         
         with tab5:
             display_isbar_report(patient)
+def create_demo_cases():
+    """Create realistic demo cases for the dashboard"""
+    demo_cases = []
+    
+    # Critical Cardiac Case
+    demo_cases.append({
+        "id": "DEMO-1001",
+        "patient": {"name": "Pt-0423", "age": 68, "sex": "Male", "id": "PID-780123"},
+        "referrer": {"name": "Dr. Sharma", "facility": "CHC Mawlai", "role": "Emergency Physician"},
+        "provisionalDx": {"label": "Acute STEMI, anterior wall", "case_type": "Cardiac"},
+        "triage": {
+            "complaint": "Cardiac", 
+            "decision": {"color": "RED"}, 
+            "hr": 135, "sbp": 85, "rr": 22, 
+            "spo2": 89, "temp": 36.8, "avpu": "A"
+        },
+        "dest": facility,
+        "transport": {"priority": "STAT", "ambulance": "ALS + Vent", "eta_min": 12},
+        "resuscitation": [],
+        "interventions": [],
+        "times": {
+            "first_contact_ts": time.time() - 1800,
+            "decision_ts": time.time() - 1750,
+            "dispatch_ts": time.time() - 1700,
+            "enroute_ts": time.time() - 1680
+        },
+        "status": "ENROUTE",
+        "audit_log": [
+            {"ts": datetime.now().isoformat(), "action": "REFERRED", "details": "STEMI identified on ECG"},
+            {"ts": datetime.now().isoformat(), "action": "ACCEPTED", "details": "Cardiac cath lab alerted"}
+        ]
+    })
+    
+    # Maternal Emergency
+    demo_cases.append({
+        "id": "DEMO-1002",
+        "patient": {"name": "Pt-0157", "age": 34, "sex": "Female", "id": "PID-450267"},
+        "referrer": {"name": "ANM Priya", "facility": "PHC Nongpoh", "role": "ANM"},
+        "provisionalDx": {"label": "Postpartum hemorrhage, unstable", "case_type": "Maternal"},
+        "triage": {
+            "complaint": "Maternal", 
+            "decision": {"color": "RED"}, 
+            "hr": 120, "sbp": 95, "rr": 24, 
+            "spo2": 94, "temp": 37.2, "avpu": "A"
+        },
+        "dest": facility,
+        "transport": {"priority": "Urgent", "ambulance": "ALS", "eta_min": 25},
+        "resuscitation": [],
+        "interventions": [],
+        "times": {
+            "first_contact_ts": time.time() - 3600,
+            "decision_ts": time.time() - 3550
+        },
+        "status": "ACCEPTED",
+        "audit_log": [
+            {"ts": datetime.now().isoformat(), "action": "REFERRED", "details": "PPH not controlled with oxytocin"}
+        ]
+    })
+    
+    # Trauma Case
+    demo_cases.append({
+        "id": "DEMO-1003",
+        "patient": {"name": "Pt-0891", "age": 45, "sex": "Male", "id": "PID-920456"},
+        "referrer": {"name": "Dr. Singh", "facility": "CHC Jowai", "role": "Emergency Physician"},
+        "provisionalDx": {"label": "Head injury with decreasing GCS", "case_type": "Trauma"},
+        "triage": {
+            "complaint": "Trauma", 
+            "decision": {"color": "YELLOW"}, 
+            "hr": 88, "sbp": 130, "rr": 18, 
+            "spo2": 98, "temp": 36.5, "avpu": "V"
+        },
+        "dest": facility,
+        "transport": {"priority": "Urgent", "ambulance": "BLS", "eta_min": 40},
+        "resuscitation": [],
+        "interventions": [],
+        "times": {
+            "first_contact_ts": time.time() - 2700,
+            "decision_ts": time.time() - 2650,
+            "dispatch_ts": time.time() - 2600,
+            "enroute_ts": time.time() - 2550
+        },
+        "status": "ENROUTE",
+        "audit_log": [
+            {"ts": datetime.now().isoformat(), "action": "REFERRED", "details": "RTA with head injury"}
+        ]
+    })
+    
+    return demo_cases
+
+def create_random_case():
+    """Create a random case for simulation"""
+    complaints = ["Cardiac", "Trauma", "Stroke", "Maternal", "Sepsis", "Other"]
+    triages = ["RED", "YELLOW", "GREEN"]
+    priorities = ["STAT", "Urgent", "Routine"]
+    
+    complaint = random.choice(complaints)
+    triage = random.choice(triages)
+    priority = random.choice(priorities)
+    
+    return {
+        "id": f"SIM-{random.randint(1000,9999)}",
+        "patient": {
+            "name": f"Pt-{random.randint(1000,9999)}", 
+            "age": random.randint(20,80), 
+            "sex": random.choice(["Male", "Female"]),
+            "id": f"PID-{random.randint(100000,999999)}"
+        },
+        "referrer": {
+            "name": random.choice(["Dr. Rai", "Dr. Khonglah", "ANM Pynsuk"]),
+            "facility": random.choice(["PHC Mawlai", "CHC Smit", "CHC Pynursla"]),
+            "role": random.choice(["Doctor/Physician", "ANM/ASHA/EMT"])
+        },
+        "provisionalDx": {"label": f"Simulated {complaint} case", "case_type": complaint},
+        "triage": {
+            "complaint": complaint,
+            "decision": {"color": triage},
+            "hr": random.randint(60,150),
+            "sbp": random.randint(80,180),
+            "rr": random.randint(12,35),
+            "spo2": random.randint(86,99),
+            "temp": round(random.uniform(36.0,39.8),1),
+            "avpu": "A"
+        },
+        "dest": facility,
+        "transport": {
+            "priority": priority,
+            "ambulance": random.choice(["BLS", "ALS", "ALS + Vent"]),
+            "eta_min": random.randint(10,60)
+        },
+        "resuscitation": [],
+        "interventions": [],
+        "times": {"first_contact_ts": time.time()},
+        "status": "PREALERT",
+        "audit_log": []
+    }
+
+def get_patient_condition(patient):
+    """Get a descriptive condition based on patient data"""
+    triage = patient["triage"]["decision"]["color"]
+    complaint = patient["triage"]["complaint"]
+    
+    if triage == "RED":
+        return f"Critical {complaint}"
+    elif triage == "YELLOW":
+        return f"Serious {complaint}"
+    else:
+        return f"Stable {complaint}"
+
 # -------------------- Patient Detail Functions --------------------
 def display_patient_details(patient):
     """Display comprehensive patient details in a structured format"""
@@ -1242,22 +1396,156 @@ with k6: st.markdown(f'<div class="kpi"><div class="label">ICU Beds Available</d
 st.markdown('<hr class="soft" />', unsafe_allow_html=True)
 
 # -------------------- Professional Patient Dashboard --------------------
+st.subheader("📋 Incoming Patient Summary")
 
-# Define today_refs for the new dashboard
+# Calculate today's cases
 today = datetime.now().date()
-today_refs = [r for r in refs if r["times"].get("first_contact_ts") and datetime.fromtimestamp(r["times"]["first_contact_ts"]).date() == today]
+today_refs = [r for r in st.session_state.referrals_all 
+              if r["times"].get("first_contact_ts") and 
+              datetime.fromtimestamp(r["times"]["first_contact_ts"]).date() == today and
+              r["dest"] == facility]
 
-# Also define queue for the table
-priority_rank = {"STAT":0, "Urgent":1, "Routine":2}
-status_rank = {"PREALERT":0, "ACCEPTED":1, "ENROUTE":2, "ARRIVE_DEST":3, "HANDOVER":4, "REJECTED":5}
+# Create active queue (excluding rejected and completed cases)
+active_statuses = ["PREALERT", "ACCEPTED", "ENROUTE", "ARRIVE_DEST"]
+active_queue = [r for r in today_refs if r["status"] in active_statuses]
 
-queue = sorted(
-    [r for r in today_refs if r["status"] in ["PREALERT","ACCEPTED","ENROUTE","ARRIVE_DEST"]],
-    key=lambda x: (status_rank.get(x["status"],9), priority_rank.get(x["transport"].get("priority","Urgent"),1), -x["times"].get("decision_ts", 0))
+# Sort by priority and status
+priority_rank = {"STAT": 0, "Urgent": 1, "Routine": 2}
+status_rank = {"PREALERT": 0, "ACCEPTED": 1, "ENROUTE": 2, "ARRIVE_DEST": 3}
+
+sorted_queue = sorted(
+    active_queue,
+    key=lambda x: (
+        status_rank.get(x["status"], 9),
+        priority_rank.get(x["transport"].get("priority", "Urgent"), 1),
+        -x["times"].get("decision_ts", 0)
+    )
 )
 
-st.subheader("📋 Incoming Patient Summary")
-                
+# Summary KPIs
+col1, col2, col3, col4, col5 = st.columns(5)
+with col1:
+    st.metric("Total Today", len(today_refs))
+with col2:
+    st.metric("Active Now", len(active_queue))
+with col3:
+    red_cases = len([r for r in active_queue if r["triage"]["decision"]["color"] == "RED"])
+    st.metric("Critical (RED)", red_cases)
+with col4:
+    yellow_cases = len([r for r in active_queue if r["triage"]["decision"]["color"] == "YELLOW"])
+    st.metric("Urgent (YELLOW)", yellow_cases)
+with col5:
+    arrived = len([r for r in today_refs if r["status"] in ["ARRIVE_DEST", "HANDOVER"]])
+    st.metric("Arrived", arrived)
+
+# Quick Actions Row
+st.markdown("### 🚨 Quick Actions")
+action_col1, action_col2, action_col3, action_col4 = st.columns(4)
+
+with action_col1:
+    if st.button("🔄 Load Demo Cases", use_container_width=True, key="load_demo_cases"):
+        # Create realistic demo cases
+        demo_cases = create_demo_cases()
+        st.session_state.referrals_all.extend(demo_cases)
+        st.success("Demo cases loaded! Refresh to see them.")
+        st.rerun()
+
+with action_col2:
+    if st.button("📊 View All Analytics", use_container_width=True, key="view_analytics"):
+        # This will scroll to analytics section
+        st.session_state.show_analytics = True
+        st.rerun()
+
+with action_col3:
+    if st.button("🆕 Simulate New Case", use_container_width=True, key="simulate_case"):
+        new_case = create_random_case()
+        st.session_state.referrals_all.insert(0, new_case)
+        st.success(f"New case added: {new_case['patient']['name']}")
+        st.rerun()
+
+with action_col4:
+    if st.button("🧹 Clear All Cases", use_container_width=True, key="clear_cases"):
+        st.session_state.referrals_all = []
+        st.session_state.data_initialized = False
+        st.info("All cases cleared. Load demo cases to see data.")
+        st.rerun()
+
+# Patient List Section
+st.markdown("### 👥 Active Patient Transfers")
+
+if not active_queue:
+    st.warning("No active patient transfers for today. Click 'Load Demo Cases' to see sample data.")
+    
+    # Show sample of what the data will look like
+    with st.expander("📋 Sample Patient Data Structure"):
+        st.json({
+            "patient": {"name": "Pt-0423", "age": 45, "sex": "Male"},
+            "triage": {"complaint": "Cardiac", "decision": {"color": "RED"}},
+            "status": "ENROUTE",
+            "transport": {"priority": "STAT", "eta_min": 15},
+            "referrer": {"facility": "CHC Mawlai", "name": "Dr. Sharma"}
+        })
+else:
+    # Create a proper dataframe for display
+    patient_data = []
+    for patient in sorted_queue:
+        # Calculate time since alert
+        alert_time = patient["times"].get("first_contact_ts")
+        time_ago = get_time_ago(alert_time) if alert_time else "Unknown"
+        
+        patient_data.append({
+            "Select": patient["id"],
+            "Patient": f"{patient['patient']['name']} ({patient['patient']['age']}{patient['patient']['sex'][0]})",
+            "Triage": patient["triage"]["decision"]["color"],
+            "Chief Complaint": patient["triage"]["complaint"],
+            "Status": patient["status"],
+            "Priority": patient["transport"]["priority"],
+            "ETA": f"{patient['transport'].get('eta_min', '—')} min",
+            "Referring Facility": patient["referrer"]["facility"][:20] + "..." if len(patient["referrer"]["facility"]) > 20 else patient["referrer"]["facility"],
+            "Time Since Alert": time_ago,
+            "Condition": get_patient_condition(patient)
+        })
+    
+    df = pd.DataFrame(patient_data)
+    
+    # Display the interactive table
+    st.dataframe(
+        df,
+        use_container_width=True,
+        height=400,
+        hide_index=True,
+        column_config={
+            "Select": st.column_config.TextColumn("ID", width="small"),
+            "Triage": st.column_config.TextColumn("Triage", width="small"),
+            "Status": st.column_config.TextColumn("Status", width="medium"),
+            "Priority": st.column_config.TextColumn("Priority", width="small"),
+            "ETA": st.column_config.TextColumn("ETA", width="small"),
+            "Condition": st.column_config.TextColumn("Condition", width="medium"),
+        }
+    )
+    
+    # Patient Selection for Detailed View
+    st.markdown("### 🏥 Patient Details Viewer")
+    
+    if len(active_queue) > 0:
+        # Create a select box for patient selection
+        selected_patient_id = st.selectbox(
+            "Choose a patient to view detailed medical information:",
+            options=[p["id"] for p in sorted_queue],
+            format_func=lambda x: f"{x} - {next((p['patient']['name'] for p in sorted_queue if p['id'] == x), 'Unknown')}",
+            key="patient_detail_selector"
+        )
+        
+        # Find the selected patient
+        selected_patient = next((p for p in sorted_queue if p["id"] == selected_patient_id), None)
+        
+        if selected_patient:
+            # Display comprehensive patient details
+            display_patient_details(selected_patient)
+        else:
+            st.error("Selected patient not found in current data.")
+    else:
+        st.info("No patients available for detailed view.")
 # ---------- REAL-TIME FEED PANEL ----------
 def _ingest_events_for(case_id: str):
     """Fetch new events for case, append to buffers, raise notifications if needed."""
