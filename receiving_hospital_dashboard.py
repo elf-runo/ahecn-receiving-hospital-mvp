@@ -111,6 +111,7 @@ def show_login_screen():
                 st.session_state.authenticated = True
                 st.session_state.user_role = role
                 st.session_state.username = username
+                auto_save()
                 st.rerun()
             else:
                 st.error("Please enter both username and password")
@@ -275,6 +276,14 @@ h1, h2, h3 {
 }
 </style>
 """, unsafe_allow_html=True)
+# -------------------- Demo User Setup --------------------
+if "user" not in st.session_state:
+    st.session_state.user = {
+        "name": "Dr. Demo User", 
+        "role": "Emergency Physician",
+        "facility": "NEIGRIHMS"
+    }
+
 # -------------------- Utilities --------------------
 def now_ts() -> float: return time.time()
 def fmt_ts(ts: float, short=False) -> str:
@@ -321,7 +330,54 @@ def safe_get(obj, keys, default=None):
         return obj
     except (KeyError, TypeError):
         return default
-        
+def add_intervention(case_id, intervention, details, interv_type):
+    """Quick intervention tracking"""
+    if "interventions" not in st.session_state:
+        st.session_state.interventions = {}
+    
+    if case_id not in st.session_state.interventions:
+        st.session_state.interventions[case_id] = []
+    
+    st.session_state.interventions[case_id].append({
+        "intervention": intervention,
+        "details": details, 
+        "type": interv_type,
+        "timestamp": time.time()
+    })
+    
+    # Show success message
+    st.success(f"Added: {intervention}")    
+def auto_save():
+    """Simple auto-save to session state"""
+    # This ensures data persists during the session
+    if "saved_data" not in st.session_state:
+        st.session_state.saved_data = {}
+    
+    st.session_state.saved_data = {
+        "referrals": st.session_state.referrals_all,
+        "interventions": st.session_state.get("interventions", {}),
+        "resources": st.session_state.get("resources", {}),
+        "notifications": st.session_state.get("notifications", [])
+    }
+
+# Also add this initialization at the start of your session state
+if "saved_data" in st.session_state:
+    # Restore from saved data
+    st.session_state.referrals_all = st.session_state.saved_data.get("referrals", [])
+    st.session_state.interventions = st.session_state.saved_data.get("interventions", {})
+    st.session_state.resources = st.session_state.saved_data.get("resources", {})
+    st.session_state.notifications = st.session_state.saved_data.get("notifications", [])
+else:
+    # Initialize fresh
+    st.session_state.interventions = {}
+    st.session_state.resources = {
+        "NEIGRIHMS": {"icu_beds": 12, "icu_available": 4},
+        "Civil Hospital Shillong": {"icu_beds": 8, "icu_available": 2},
+        "Nazareth Hospital": {"icu_beds": 6, "icu_available": 1},
+        "Ganesh Das MCH": {"icu_beds": 10, "icu_available": 3},
+        "Sohra Civil Hospital": {"icu_beds": 4, "icu_available": 2},
+        "Shillong Polyclinic & Trauma": {"icu_beds": 8, "icu_available": 0}
+    }    
 # -------------------- Synthetic Data --------------------
 FACILITY_POOL = [
     "NEIGRIHMS", "Civil Hospital Shillong", "Nazareth Hospital",
@@ -431,7 +487,15 @@ if "show_notifs" not in st.session_state:
     st.session_state.show_notifs = False
 if "notify_rules" not in st.session_state:
     st.session_state.notify_rules = {"RED_only": True, "eta_soon": True, "rejections": True}
-
+if "resources" not in st.session_state:
+    st.session_state.resources = {
+        "NEIGRIHMS": {"icu_beds": 12, "icu_available": 4},
+        "Civil Hospital Shillong": {"icu_beds": 8, "icu_available": 2},
+        "Nazareth Hospital": {"icu_beds": 6, "icu_available": 1},
+        "Ganesh Das MCH": {"icu_beds": 10, "icu_available": 3},
+        "Sohra Civil Hospital": {"icu_beds": 4, "icu_available": 2},
+        "Shillong Polyclinic & Trauma": {"icu_beds": 8, "icu_available": 0}
+    }
 # ADDED: keep per-case event watermark + live buffer + which case is open
 if "last_event_id" not in st.session_state: 
     st.session_state.last_event_id = {}          # {case_id: last_id}
@@ -449,13 +513,26 @@ if "referring_interventions" not in st.session_state:
 if "emt_interventions" not in st.session_state:
     st.session_state.emt_interventions = {}  # {case_id: [interventions]}
     
-def push_notification(kind: str, title: str, body: str, ref_id: str = None, severity: str = "info"):
+def push_notification(title: str, body: str, case_id: str = None, urgency: str = "medium"):
+    """Enhanced notifications with urgency levels"""
+    icon = "🔴" if urgency == "high" else "🟡" if urgency == "medium" else "🔵"
+    
+    if "notifications" not in st.session_state:
+        st.session_state.notifications = []
+    
     st.session_state.notifications.insert(0, {
         "id": str(uuid.uuid4())[:8],
         "ts": now_ts(),
-        "kind": kind, "title": title, "body": body,
-        "ref_id": ref_id, "read": False, "severity": severity
+        "title": f"{icon} {title}",
+        "body": body,
+        "case_id": case_id,
+        "read": False,
+        "urgency": urgency
     })
+    
+    # Show toast for high urgency
+    if urgency == "high":
+        st.toast(f"{icon} {title}: {body}", icon="🚨")
 
 def unread_count():
     return sum(1 for n in st.session_state.notifications if not n["read"])
@@ -489,8 +566,41 @@ if "data_loaded" not in st.session_state or not st.session_state.data_loaded:
     
 # -------------------- Sidebar Controls --------------------
 st.sidebar.header("Receiving Hospital")
+st.sidebar.markdown(f"**👤 {st.session_state.user['name']}**")
+st.sidebar.markdown(f"*{st.session_state.user['role']}*")
+st.sidebar.markdown(f"🏥 {st.session_state.user['facility']}")
+st.sidebar.markdown("---")
 facility = st.sidebar.selectbox("You are receiving for:", st.session_state.get("facilities", ["NEIGRIHMS"]), index=0)
+# In sidebar, add demo tools
+st.sidebar.markdown("---")
+st.sidebar.markdown("**🎬 Demo Tools**")
 
+if st.sidebar.button("Load Demo Scenario"):
+    # Create realistic demo cases
+    demo_cases = [
+        create_demo_case("RED", "STAT", "Cardiac", "ENROUTE", "STEMI, critical"),
+        create_demo_case("RED", "Urgent", "Maternal", "ACCEPTED", "Postpartum hemorrhage"), 
+        create_demo_case("YELLOW", "Urgent", "Trauma", "ENROUTE", "Head injury, stable"),
+        create_demo_case("GREEN", "Routine", "Other", "PREALERT", "Follow-up care")
+    ]
+    
+    st.session_state.referrals_all = demo_cases
+    st.sidebar.success("Demo scenario loaded!")
+    auto_save()
+    st.rerun()
+
+def create_demo_case(triage, priority, complaint, status, scenario):
+    """Create a demo case"""
+    return {
+        "id": f"DEMO-{random.randint(1000,9999)}",
+        "patient": {"name": f"Pt-{random.randint(1000,9999)}", "age": random.randint(20,80), "sex": random.choice(["Male","Female"])},
+        "referrer": {"name": "Dr. Demo", "facility": "Demo CHC", "role": "Doctor"},
+        "triage": {"complaint": complaint, "decision": {"color": triage}, "hr": random.randint(60,150), "sbp": random.randint(80,180), "spo2": random.randint(88,99)},
+        "transport": {"priority": priority, "ambulance": "ALS", "eta_min": random.randint(10,45)},
+        "status": status,
+        "times": {"first_contact_ts": time.time() - random.randint(3600, 7200)},
+        "scenario": scenario
+    }
 # Date range controls
 default_end = datetime.now().date()
 default_start = default_end - timedelta(days=6)
@@ -499,6 +609,58 @@ if isinstance(date_range, tuple) and len(date_range) == 2:
     d0, d1 = date_range
 else:
     d0, d1 = default_start, default_end
+
+# === DEMO DATA GENERATOR - ADD THIS RIGHT HERE ===
+st.sidebar.markdown("---")
+st.sidebar.markdown("**🎬 Demo Tools**")
+
+if st.sidebar.button("Load Demo Scenario"):
+    # Clear existing data
+    st.session_state.referrals_all = []
+    
+    # Create realistic demo cases
+    demo_cases = []
+    
+    # Critical cases
+    demo_cases.append({
+        "id": "DEMO-1001",
+        "patient": {"name": "Pt-0423", "age": 68, "sex": "Male"},
+        "referrer": {"name": "Dr. Sharma", "facility": "CHC Mawlai", "role": "Doctor"},
+        "triage": {"complaint": "Cardiac", "decision": {"color": "RED"}, "hr": 135, "sbp": 85, "rr": 22, "spo2": 89, "temp": 36.8, "avpu": "A"},
+        "transport": {"priority": "STAT", "ambulance": "ALS", "eta_min": 15},
+        "status": "ENROUTE",
+        "times": {"first_contact_ts": time.time() - 1800},
+        "provisionalDx": {"label": "STEMI, critical condition"}
+    })
+    
+    # Urgent case
+    demo_cases.append({
+        "id": "DEMO-1002", 
+        "patient": {"name": "Pt-0157", "age": 34, "sex": "Female"},
+        "referrer": {"name": "ANM Priya", "facility": "PHC Nongpoh", "role": "ANM"},
+        "triage": {"complaint": "Maternal", "decision": {"color": "RED"}, "hr": 120, "sbp": 95, "rr": 24, "spo2": 94, "temp": 37.2, "avpu": "A"},
+        "transport": {"priority": "Urgent", "ambulance": "ALS", "eta_min": 25},
+        "status": "ACCEPTED", 
+        "times": {"first_contact_ts": time.time() - 3600},
+        "provisionalDx": {"label": "Postpartum hemorrhage"}
+    })
+    
+    # Stable case
+    demo_cases.append({
+        "id": "DEMO-1003",
+        "patient": {"name": "Pt-0891", "age": 45, "sex": "Male"}, 
+        "referrer": {"name": "Dr. Singh", "facility": "CHC Jowai", "role": "Doctor"},
+        "triage": {"complaint": "Trauma", "decision": {"color": "YELLOW"}, "hr": 88, "sbp": 130, "rr": 18, "spo2": 98, "temp": 36.5, "avpu": "A"},
+        "transport": {"priority": "Urgent", "ambulance": "BLS", "eta_min": 40},
+        "status": "ENROUTE",
+        "times": {"first_contact_ts": time.time() - 2700},
+        "provisionalDx": {"label": "Head injury, stable"}
+    })
+    
+    st.session_state.referrals_all = demo_cases
+    st.sidebar.success("🎯 Demo scenario loaded! 3 cases added.")
+    auto_save()
+    st.rerun()
 
 # Notification rules
 st.sidebar.subheader("Notification Rules")
@@ -533,7 +695,13 @@ if DEBUG:
     if st.sidebar.button("Generate Test Alert"):
         push_notification("TEST", "Test Notification", "This is a test notification", "TEST-001", "info")
         st.sidebar.success("Test notification sent")
-
+# Add resource manager in sidebar
+with st.sidebar.expander("🛏️ Resource Manager"):
+    new_icu = st.number_input("ICU Beds Available", 0, icu_total, icu_available)
+    if new_icu != icu_available:
+        st.session_state.resources[facility]["icu_available"] = new_icu
+        auto_save()
+        st.rerun()
 # -------------------- Intervention Tracking Functions --------------------
 def add_referring_intervention(case_id, intervention, details, timestamp=None):
     """Add a referring institution intervention"""
@@ -656,10 +824,12 @@ if st.session_state.show_notifs:
         if st.button("Mark all read"):
             for n in st.session_state.notifications:
                 n["read"] = True
+            auto_save()    
             st.rerun()
     with colN2:
         if st.button("Clear all"):
             st.session_state.notifications = []
+            auto_save() 
             st.rerun()
     with colN3:
         st.caption("System generates notifications on accepted RED cases, ETA soon, and rejections (configurable in sidebar).")
@@ -757,7 +927,8 @@ rejected = analytics_data.get("rejected", 0)
 accept_rate = analytics_data.get("accept_rate", 0.0)
 
 # Get ICU beds for current facility
-icu_open = st.session_state.facility_meta[facility]["ICU_open"]
+icu_available = st.session_state.resources[facility]["icu_available"]
+icu_total = st.session_state.resources[facility]["icu_beds"]
 
 k1,k2,k3,k4,k5,k6 = st.columns(6)
 with k1: st.markdown(f'<div class="kpi"><div class="label">Referrals (range)</div><div class="value">{total}</div></div>', unsafe_allow_html=True)
@@ -765,7 +936,7 @@ with k2: st.markdown(f'<div class="kpi"><div class="label">Awaiting/Active</div>
 with k3: st.markdown(f'<div class="kpi"><div class="label">En Route</div><div class="value">{enroute}</div></div>', unsafe_allow_html=True)
 with k4: st.markdown(f'<div class="kpi"><div class="label">Arrived</div><div class="value">{arrived}</div></div>', unsafe_allow_html=True)
 with k5: st.markdown(f'<div class="kpi"><div class="label">Acceptance Rate</div><div class="value">{accept_rate:.0f}%</div></div>', unsafe_allow_html=True)
-with k6: st.markdown(f'<div class="kpi"><div class="label">ICU Beds Open</div><div class="value">{icu_open}</div></div>', unsafe_allow_html=True)
+with k6: st.markdown(f'<div class="kpi"><div class="label">ICU Beds Available</div><div class="value {"red-text" if icu_available == 0 else "yellow-text" if icu_available < 3 else ""}">{icu_available}/{icu_total}</div></div>', unsafe_allow_html=True)
 
 st.markdown('<hr class="soft" />', unsafe_allow_html=True)
 
@@ -802,211 +973,112 @@ with st.expander("🧪 Simulate a new pre-alert (for testing)"):
         if st.session_state.notify_rules["RED_only"] and tri_new == "RED":
             push_notification("RED_PREALERT", "Critical pre-alert", f"{compl_new} • {tri_new} • Priority {pr_new}", r["id"], "warning")
         st.success("Pre-alert added")
+        auto_save() 
         st.rerun()
 
 if not queue:
     st.info("No active or awaiting referrals for today.")
 else:
     for r in queue:
-        with st.container():
-            st.markdown('<div class="card">', unsafe_allow_html=True)
-            header_l, header_r = st.columns([3, 2])
-            with header_l:
-                tri_html = triage_pill(r["triage"]["decision"]["color"])
-                st.markdown(f"**{r['patient']['name']}**, {r['patient']['age']} {r['patient']['sex']} {tri_html}", unsafe_allow_html=True)
-                st.caption(f"From **{r['referrer']['facility']}** (by {r['referrer']['name']} – {r['referrer']['role']})")
-                st.caption(f"Dx: {r['provisionalDx'].get('label','—')}")
-                
-                # ADDED: Button to open live feed for this case
-                if st.button("📡 Open Live Feed", key=f"live_{r['id']}"):
-                    st.session_state.open_case_id = r["id"]
-                    st.rerun()
-                    
-            with header_r:
-                st.write(f"**Status:** {r['status']}")
-                eta_txt = r['transport'].get('eta_min', '—')
-                st.write(f"**ETA:** {eta_txt} min  •  **Amb:** {r['transport'].get('ambulance','—')}  •  **Priority:** {r['transport'].get('priority','Urgent')}")
+    with st.container():
+        # === ENHANCED HEADER WITH COLOR CODING ===
+        triage_color = r["triage"]["decision"]["color"]
+        bg_color = "#dc2626" if triage_color == "RED" else "#d97706" if triage_color == "YELLOW" else "#059669"
+        
+        st.markdown(f"""
+        <div style="background: {bg_color}; padding: 8px; border-radius: 8px; margin-bottom: 8px;">
+            <div style="color: white; font-weight: bold; display: flex; justify-content: space-between;">
+                <span>{r['patient']['name']}, {r['patient']['age']} {r['patient']['sex']}</span>
+                <span>{triage_color} • {r['transport']['priority']}</span>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        st.caption(f"🚑 From {r['referrer']['facility']} • {r['triage']['complaint']}")
 
-            a1,a2,a3,a4,a5 = st.columns(5)
+        # === QUICK ACTIONS ROW ===
+        col1, col2, col3, col4, col5 = st.columns(5)
+        
+        if col1.button("✅ Accept", key=f"acc_{r['id']}", use_container_width=True):
+            r["status"] = "ACCEPTED"
+            auto_save()
+            st.rerun()
+            
+        if col2.button("🚗 En Route", key=f"enr_{r['id']}", use_container_width=True):
+            r["status"] = "ENROUTE"
+            auto_save()
+            st.rerun()
+            
+        if col3.button("🏥 Arrived", key=f"arr_{r['id']}", use_container_width=True):
+            r["status"] = "ARRIVE_DEST"
+            auto_save()
+            st.rerun()
+            
+        if col4.button("👥 Handover", key=f"hov_{r['id']}", use_container_width=True):
+            r["status"] = "HANDOVER"
+            auto_save()
+            st.rerun()
 
-            # Accept
-            if a1.button("Accept", key=f"acc_{r['id']}", use_container_width=True, disabled=r["status"] not in ["PREALERT","ACCEPTED"]):
-                if r["status"] == "PREALERT":
-                    r["status"] = "ACCEPTED"
-                r["audit_log"].append({"ts": datetime.now().isoformat(), "action":"ACCEPTED"})
-                if r["triage"]["decision"]["color"] == "RED" and st.session_state.notify_rules["RED_only"]:
-                    push_notification("RED_PREALERT", "Accepted RED pre-alert", f"{r['triage']['complaint']} • Priority {r['transport'].get('priority','Urgent')}", r["id"], "warning")
-                st.rerun()
-
-            # Mark En Route
-            if a2.button("En Route", key=f"enr_{r['id']}", use_container_width=True, disabled=r["status"] not in ["PREALERT","ACCEPTED","ENROUTE"]):
-                r["status"] = "ENROUTE"
-                r["times"]["dispatch_ts"] = r["times"].get("dispatch_ts", now_ts())
-                r["times"]["enroute_ts"] = now_ts()
-                r["audit_log"].append({"ts": datetime.now().isoformat(), "action":"ENROUTE"})
-                eta = r["transport"].get("eta_min")
-                if eta is not None and eta <= 15 and st.session_state.notify_rules["eta_soon"]:
-                    push_notification("ETA_SOON", f"ETA {eta} min", f"{r['patient']['name']} • {r['triage']['complaint']}", r["id"], "info")
-                st.rerun()
-
-            # Arrived
-            if a3.button("Arrived", key=f"arr_{r['id']}", use_container_width=True, disabled=r["status"] not in ["ENROUTE","ARRIVE_DEST"]):
-                r["status"] = "ARRIVE_DEST"
-                r["times"]["arrive_dest_ts"] = now_ts()
-                r["audit_log"].append({"ts": datetime.now().isoformat(), "action":"ARRIVE_DEST"})
-                st.rerun()
-
-            # Handover
-            if a4.button("Handover", key=f"hov_{r['id']}", use_container_width=True, disabled=r["status"] not in ["ARRIVE_DEST"]):
-                r["status"] = "HANDOVER"
-                r["times"]["handover_ts"] = now_ts()
-                r["audit_log"].append({"ts": datetime.now().isoformat(), "action":"HANDOVER"})
-                st.rerun()
-
-            # Reject
-            rej_reason = a5.selectbox("Reject reason", ["—"] + REJECT_REASONS, key=f"rejrs_{r['id']}")
-            if a5.button("Reject", key=f"rej_{r['id']}", use_container_width=True, disabled=rej_reason=="—"):
-                r["status"] = "REJECTED"
-                r["audit_log"].append({"ts": datetime.now().isoformat(), "action":"REJECTED", "reason": rej_reason})
-                if st.session_state.notify_rules["rejections"]:
-                    push_notification("REJECTED", "Case rejected", f"{rej_reason} • {r['triage']['complaint']}", r["id"], "bad")
-                st.warning(f"Case rejected: {rej_reason}")
-                st.rerun()
-
-            st.markdown('<hr class="soft" />', unsafe_allow_html=True)
-
-            # Details row - ENHANCED WITH INTERVENTION TRACKING
-            d1, d2 = st.columns([2, 3])
-
-            with d1:
-                st.markdown("**Timeline**")
-                tl = r["times"]
-                st.write(f"- First contact: {fmt_ts(tl.get('first_contact_ts'))}")
-                st.write(f"- Decision: {fmt_ts(tl.get('decision_ts'))}")
-                st.write(f"- Dispatch: {fmt_ts(tl.get('dispatch_ts'))}")
-                st.write(f"- En route: {fmt_ts(tl.get('enroute_ts'))}")
-                st.write(f"- Arrive dest: {fmt_ts(tl.get('arrive_dest_ts'))}")
-                st.write(f"- Handover: {fmt_ts(tl.get('handover_ts'))}")
-
-                st.markdown("**Audit**")
-                if r.get("audit_log"):
-                    for a in r["audit_log"]:
-                        txt = f"{a['ts']} • {a['action']}" + (f" • {a.get('reason','')}" if a.get("reason") else "")
-                        st.markdown(f'<div class="audit">{txt}</div>', unsafe_allow_html=True)
-                else:
-                    st.caption("No audit entries yet.")
-
-            with d2:
-                # INTERVENTION TRACKING SECTION
-                st.markdown("**🧰 Interventions & Clinical Actions**")
-                
-                # Tab interface for different intervention types
-                tab1, tab2, tab3 = st.tabs(["Referring Facility", "EMT During Transit", "All Interventions"])
-                
-                with tab1:
-                    st.markdown("**Pre-Transfer Interventions**")
-                    
-                    # Form to add referring intervention
-                    with st.form(key=f"ref_interv_{r['id']}"):
-                        col1, col2 = st.columns([2, 1])
-                        ref_intervention = col1.selectbox("Intervention", REFERRING_INTERVENTIONS, key=f"ref_sel_{r['id']}")
-                        ref_details = col2.text_input("Details/Dose", placeholder="e.g., 2L O2, 500ml NS")
-                        
-                        if st.form_submit_button("➕ Add Referring Intervention"):
-                            if ref_intervention:
-                                add_referring_intervention(r['id'], ref_intervention, ref_details)
-                                st.success(f"Added: {ref_intervention}")
-                                st.rerun()
-                    
-                    # Display referring interventions
-                    ref_interventions = st.session_state.referring_interventions.get(r['id'], [])
-                    if ref_interventions:
-                        for interv in ref_interventions:
-                            st.markdown(f"""
-                            <div class="audit">
-                                🏥 <strong>{interv['intervention']}</strong><br>
-                                <small>{interv['details']} • {fmt_ts(interv['timestamp'], short=True)}</small>
-                            </div>
-                            """, unsafe_allow_html=True)
-                    else:
-                        st.caption("No referring interventions recorded")
-                
-                with tab2:
-                    st.markdown("**EMT Interventions During Transit**")
-                    
-                    # Form to add EMT intervention
-                    with st.form(key=f"emt_interv_{r['id']}"):
-                        col1, col2, col3 = st.columns([2, 1, 1])
-                        emt_intervention = col1.selectbox("Intervention", EMT_INTERVENTIONS, key=f"emt_sel_{r['id']}")
-                        emt_details = col2.text_input("Details", placeholder="e.g., 18g IV, 250ml")
-                        emt_status = col3.selectbox("Status", INTERVENTION_STATUS, key=f"emt_stat_{r['id']}")
-                        
-                        if st.form_submit_button("➕ Add EMT Intervention"):
-                            if emt_intervention:
-                                add_emt_intervention(r['id'], emt_intervention, emt_details, emt_status)
-                                st.success(f"Added: {emt_intervention} ({emt_status})")
-                                st.rerun()
-                    
-                    # Display EMT interventions
-                    emt_interventions = st.session_state.emt_interventions.get(r['id'], [])
-                    if emt_interventions:
-                        for interv in emt_interventions:
-                            status_icon = "🟢" if interv['status'] == 'Completed' else "🟡" if interv['status'] == 'In Progress' else "⚪"
-                            st.markdown(f"""
-                            <div class="audit">
-                                🚑 {status_icon} <strong>{interv['intervention']}</strong> • {interv['status']}<br>
-                                <small>{interv['details']} • {fmt_ts(interv['timestamp'], short=True)}</small>
-                            </div>
-                            """, unsafe_allow_html=True)
-                    else:
-                        st.caption("No EMT interventions recorded")
-                
-                with tab3:
-                    st.markdown("**All Interventions Timeline**")
-                    all_interventions = get_all_interventions(r['id'])
-                    if all_interventions:
-                        for interv in all_interventions:
-                            icon = "🏥" if interv['type'] == 'referring' else "🚑"
-                            status_indicator = "• ✅" if interv['status'] == 'Completed' else "• 🔄" if interv['status'] == 'In Progress' else ""
-                            st.markdown(f"""
-                            <div class="audit">
-                                {icon} <strong>{interv['intervention']}</strong> {status_indicator}<br>
-                                <small>{interv['details']} • {fmt_ts(interv['timestamp'], short=True)}</small>
-                            </div>
-                            """, unsafe_allow_html=True)
-                    else:
-                        st.caption("No interventions recorded for this case")
-                
-                st.markdown("---")
-                
-                # Vitals section remains but enhanced
-                st.markdown("**Vitals (latest & add)**")
-                colv1, colv2, colv3 = st.columns(3)
-                v_hr = colv1.number_input("HR", 0, 250, r['triage']['hr'], key=f"vhr_{r['id']}")
-                v_sbp = colv2.number_input("SBP", 0, 300, r['triage']['sbp'], key=f"vsbp_{r['id']}")
-                v_rr = colv3.number_input("RR", 0, 80, r['triage']['rr'], key=f"vrr_{r['id']}")
-                colv4, colv5, colv6 = st.columns(3)
-                v_spo2 = colv4.number_input("SpO₂", 50, 100, r['triage']['spo2'], key=f"vspo2_{r['id']}")
-                v_temp = colv5.number_input("Temp °C", 30.0, 43.0, r['triage']['temp'], step=0.1, key=f"vtemp_{r['id']}")
-                v_avpu = colv6.selectbox("AVPU", ["A", "V", "P", "U"], index=0, key=f"vavpu_{r['id']}")
-
-                if st.button("➕ Add vitals", key=f"addv_{r['id']}"):
-                    if "vitals_history" not in r: 
-                        r["vitals_history"] = []
-                    r["vitals_history"].append({
-                        "timestamp": now_ts(), "hr": v_hr, "sbp": v_sbp, "rr": v_rr,
-                        "spo2": v_spo2, "temp": v_temp, "avpu": v_avpu
+        # === QUICK INTERVENTIONS ===
+        with col5:
+            with st.popover("🩺 Quick Actions"):
+                if st.button("💉 IV Access", key=f"iv_{r['id']}"):
+                    if "interventions" not in st.session_state:
+                        st.session_state.interventions = {}
+                    if r['id'] not in st.session_state.interventions:
+                        st.session_state.interventions[r['id']] = []
+                    st.session_state.interventions[r['id']].append({
+                        "intervention": "IV Access", "details": "18G left AC", "type": "emt", "timestamp": time.time()
                     })
-                    st.success("Vitals recorded")
-                    st.rerun()
+                    st.success("IV Access recorded")
+                    
+                if st.button("💊 Meds Given", key=f"meds_{r['id']}"): 
+                    if "interventions" not in st.session_state:
+                        st.session_state.interventions = {}
+                    if r['id'] not in st.session_state.interventions:
+                        st.session_state.interventions[r['id']] = []
+                    st.session_state.interventions[r['id']].append({
+                        "intervention": "Medication", "details": "As per protocol", "type": "emt", "timestamp": time.time()
+                    })
+                    st.success("Medication recorded")
+                    
+                if st.button("🫁 O2 Therapy", key=f"o2_{r['id']}"):
+                    if "interventions" not in st.session_state:
+                        st.session_state.interventions = {}
+                    if r['id'] not in st.session_state.interventions:
+                        st.session_state.interventions[r['id']] = []
+                    st.session_state.interventions[r['id']].append({
+                        "intervention": "Oxygen Therapy", "details": "2L nasal cannula", "type": "emt", "timestamp": time.time()
+                    })
+                    st.success("Oxygen therapy recorded")
 
-                if r.get("vitals_history"):
-                    vdf = pd.DataFrame(r["vitals_history"])
-                    vdf["time"] = pd.to_datetime(vdf["timestamp"], unit="s").dt.strftime("%H:%M")
-                    st.dataframe(vdf[["time","hr","sbp","rr","spo2","temp","avpu"]].tail(6), use_container_width=True, height=180)
-                else:
-                    st.caption("No vitals history yet.")
+        # === VITALS WITH ALERTS ===
+        st.markdown("**Vitals**")
+        v1, v2, v3, v4, v5, v6 = st.columns(6)
+        hr = v1.number_input("HR", 60, 150, r['triage']['hr'], key=f"hr_{r['id']}")
+        sbp = v2.number_input("SBP", 80, 200, r['triage']['sbp'], key=f"sbp_{r['id']}")
+        spo2 = v3.number_input("SpO2", 85, 100, r['triage']['spo2'], key=f"spo2_{r['id']}")
+        rr = v4.number_input("RR", 12, 35, r['triage']['rr'], key=f"rr_{r['id']}")
+        temp = v5.number_input("Temp", 36.0, 40.0, r['triage']['temp'], key=f"temp_{r['id']}")
+        avpu = v6.selectbox("AVPU", ["A", "V", "P", "U"], index=0, key=f"avpu_{r['id']}")
+        
+        # Critical value alerts
+        if hr > 130 or hr < 50:
+            v1.error("🚨")
+        if sbp < 90:
+            v2.error("🚨") 
+        if spo2 < 92:
+            v3.error("🚨")
+        if avpu != 'A':
+            v6.error("🚨")
 
+        # === SHOW RECENT INTERVENTIONS ===
+        if "interventions" in st.session_state and r['id'] in st.session_state.interventions:
+            st.markdown("**Recent Actions**")
+            for iv in st.session_state.interventions[r['id']][-2:]:  # Show last 2
+                st.caption(f"🚑 {iv['intervention']} - {iv['details']}")
+
+        st.markdown('</div>', unsafe_allow_html=True)
                 st.markdown("**ISBAR (auto)**")
                 isbar = f"""I: {r['patient']['name']}, {r['patient']['age']}{r['patient']['sex']} • {r['id']}
 S: {r['triage']['complaint']} • Triage {r['triage']['decision']['color']} • Priority {r['transport'].get('priority','Urgent')}
@@ -1128,6 +1200,7 @@ if st.session_state.open_case_id:
         if c3.button("Close feed"):
             st.session_state.open_case_id = None
             st.success("Live feed closed")
+            auto_save()
             st.rerun()
 
 # Enhanced real-time features
