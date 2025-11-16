@@ -594,7 +594,42 @@ if st.session_state.show_notifs:
         </div>
         """, unsafe_allow_html=True)
     st.markdown('<hr class="soft" />', unsafe_allow_html=True)
+# -------------------- Performance Optimizations --------------------
+@st.cache_data(ttl=300)  # Cache for 5 minutes
+def get_analytics_data(_adf, d0, d1):
+    """Cache expensive analytics calculations"""
+    if _adf.empty:
+        return {}
+    
+    # Calculate metrics (this is computationally expensive)
+    accept_base = len(_adf[_adf["status"].isin(["PREALERT","ACCEPTED","ENROUTE","ARRIVE_DEST","HANDOVER","REJECTED"])])
+    rejected = len(_adf[_adf["status"]=="REJECTED"])
+    accept_rate = (100.0 * (accept_base - rejected) / accept_base) if accept_base else 0.0
+    
+    metrics = {
+        "total": len(_adf),
+        "awaiting": len(_adf[_adf["status"].isin(["PREALERT","ACCEPTED","ENROUTE"])]),
+        "enroute": len(_adf[_adf["status"]=="ENROUTE"]),
+        "arrived": len(_adf[_adf["status"]=="ARRIVE_DEST"]),
+        "handover": len(_adf[_adf["status"]=="HANDOVER"]),
+        "rejected": rejected,
+        "accept_rate": accept_rate,
+        "median_times": calculate_median_times(_adf)
+    }
+    
+    return metrics
 
+def calculate_median_times(df):
+    """Calculate median times for SLAs"""
+    dd = df["decision_to_dispatch_min"].dropna()
+    da = df["dispatch_to_arrival_min"].dropna()
+    ah = df["arrival_to_handover_min"].dropna()
+    
+    return {
+        "decision_to_dispatch": median(dd) if not dd.empty else 0,
+        "dispatch_to_arrival": median(da) if not da.empty else 0,
+        "arrival_to_handover": median(ah) if not ah.empty else 0
+    }
 # -------------------- KPIs (range) --------------------
 def to_row(r):
     t = r["times"]
