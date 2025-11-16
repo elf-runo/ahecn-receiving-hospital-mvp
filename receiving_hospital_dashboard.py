@@ -670,7 +670,7 @@ if DEBUG:
             st.sidebar.success("Data saved successfully")
     
     if st.sidebar.button("Generate Test Alert", key="test_alert_unique"):
-        push_notification("TEST", "Test Notification", "This is a test notification", "TEST-001", "info")
+        push_notification("Test Notification", "This is a test notification", "TEST-001", "low")
         st.sidebar.success("Test notification sent")
 # -------------------- Intervention Tracking Functions --------------------
 def add_referring_intervention(case_id, intervention, details, timestamp=None):
@@ -941,9 +941,9 @@ with st.expander("🧪 Simulate a new pre-alert (for testing)"):
         r["transport"]["ambulance"] = amb_new
         st.session_state.referrals_all.insert(0, r)
         if st.session_state.notify_rules["RED_only"] and tri_new == "RED":
-            push_notification("RED_PREALERT", "Critical pre-alert", f"{compl_new} • {tri_new} • Priority {pr_new}", r["id"], "warning")
+            # FIXED: Updated push_notification call
+            push_notification("Critical pre-alert", f"{compl_new} • {tri_new} • Priority {pr_new}", r["id"], "high")
         st.success("Pre-alert added")
-        auto_save() 
         st.rerun()
 
 if not queue:
