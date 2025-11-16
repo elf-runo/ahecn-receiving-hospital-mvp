@@ -83,8 +83,19 @@ def load_config_from_yaml():
 # Uncomment to use YAML config:
 # CONFIG = load_config_from_yaml()
 
+# -------------------- Auto-save Function --------------------
+def auto_save():
+    """Simple auto-save to session state"""
+    if "saved_data" not in st.session_state:
+        st.session_state.saved_data = {}
+    
+    st.session_state.saved_data = {
+        "referrals": st.session_state.referrals_all,
+        "interventions": st.session_state.get("interventions", {}),
+        "resources": st.session_state.get("resources", {}),
+        "notifications": st.session_state.get("notifications", [])
+    }
 # -------------------- Authentication --------------------
-# Simple authentication (replace with proper auth in production)
 def check_authentication():
     """Simple authentication check - extend for production"""
     if "authenticated" not in st.session_state:
@@ -111,7 +122,6 @@ def show_login_screen():
                 st.session_state.authenticated = True
                 st.session_state.user_role = role
                 st.session_state.username = username
-                auto_save()
                 st.rerun()
             else:
                 st.error("Please enter both username and password")
