@@ -576,41 +576,15 @@ if "data_loaded" not in st.session_state or not st.session_state.data_loaded:
     
 # -------------------- Sidebar Controls --------------------
 st.sidebar.header("Receiving Hospital")
+
+# Display user info
 st.sidebar.markdown(f"**👤 {st.session_state.user['name']}**")
 st.sidebar.markdown(f"*{st.session_state.user['role']}*")
 st.sidebar.markdown(f"🏥 {st.session_state.user['facility']}")
 st.sidebar.markdown("---")
+
 facility = st.sidebar.selectbox("You are receiving for:", st.session_state.get("facilities", ["NEIGRIHMS"]), index=0)
-# In sidebar, add demo tools
-st.sidebar.markdown("---")
-st.sidebar.markdown("**🎬 Demo Tools**")
 
-if st.sidebar.button("Load Demo Scenario"):
-    # Create realistic demo cases
-    demo_cases = [
-        create_demo_case("RED", "STAT", "Cardiac", "ENROUTE", "STEMI, critical"),
-        create_demo_case("RED", "Urgent", "Maternal", "ACCEPTED", "Postpartum hemorrhage"), 
-        create_demo_case("YELLOW", "Urgent", "Trauma", "ENROUTE", "Head injury, stable"),
-        create_demo_case("GREEN", "Routine", "Other", "PREALERT", "Follow-up care")
-    ]
-    
-    st.session_state.referrals_all = demo_cases
-    st.sidebar.success("Demo scenario loaded!")
-    auto_save()
-    st.rerun()
-
-def create_demo_case(triage, priority, complaint, status, scenario):
-    """Create a demo case"""
-    return {
-        "id": f"DEMO-{random.randint(1000,9999)}",
-        "patient": {"name": f"Pt-{random.randint(1000,9999)}", "age": random.randint(20,80), "sex": random.choice(["Male","Female"])},
-        "referrer": {"name": "Dr. Demo", "facility": "Demo CHC", "role": "Doctor"},
-        "triage": {"complaint": complaint, "decision": {"color": triage}, "hr": random.randint(60,150), "sbp": random.randint(80,180), "spo2": random.randint(88,99)},
-        "transport": {"priority": priority, "ambulance": "ALS", "eta_min": random.randint(10,45)},
-        "status": status,
-        "times": {"first_contact_ts": time.time() - random.randint(3600, 7200)},
-        "scenario": scenario
-    }
 # Date range controls
 default_end = datetime.now().date()
 default_start = default_end - timedelta(days=6)
@@ -620,18 +594,28 @@ if isinstance(date_range, tuple) and len(date_range) == 2:
 else:
     d0, d1 = default_start, default_end
 
-# === DEMO DATA GENERATOR - ADD THIS RIGHT HERE ===
+# Notification rules
+st.sidebar.subheader("Notification Rules")
+st.session_state.notify_rules["RED_only"] = st.sidebar.checkbox("RED triage alerts", value=True)
+st.session_state.notify_rules["eta_soon"] = st.sidebar.checkbox("ETA <15min alerts", value=True)
+st.session_state.notify_rules["rejections"] = st.sidebar.checkbox("Rejection alerts", value=True)
+
+# Auto-refresh
+st.session_state.auto_refresh = st.sidebar.checkbox("Auto-refresh live feed (every 3s)", value=True)
+
+# === DEMO DATA GENERATOR ===
 st.sidebar.markdown("---")
 st.sidebar.markdown("**🎬 Demo Tools**")
 
-if st.sidebar.button("Load Demo Scenario"):
+# FIXED: Added unique key
+if st.sidebar.button("Load Demo Scenario", key="load_demo_scenario_unique"):
     # Clear existing data
     st.session_state.referrals_all = []
     
     # Create realistic demo cases
     demo_cases = []
     
-    # Critical cases
+    # Critical case
     demo_cases.append({
         "id": "DEMO-1001",
         "patient": {"name": "Pt-0423", "age": 68, "sex": "Male"},
@@ -669,49 +653,25 @@ if st.sidebar.button("Load Demo Scenario"):
     
     st.session_state.referrals_all = demo_cases
     st.sidebar.success("🎯 Demo scenario loaded! 3 cases added.")
-    auto_save()
     st.rerun()
 
-# Notification rules
-st.sidebar.subheader("Notification Rules")
-st.session_state.notify_rules["RED_only"] = st.sidebar.checkbox("RED triage alerts", value=True)
-st.session_state.notify_rules["eta_soon"] = st.sidebar.checkbox("ETA <15min alerts", value=True)
-st.session_state.notify_rules["rejections"] = st.sidebar.checkbox("Rejection alerts", value=True)
-
-# ADDED: auto-refresh - store in session state
-st.session_state.auto_refresh = st.sidebar.checkbox("Auto-refresh live feed (every 3s)", value=True)
-if st.session_state.auto_refresh:
-    try:
-        from streamlit_autorefresh import st_autorefresh
-        st_autorefresh(interval=3000, key="rx_live_autorefresh")
-    except ImportError:
-        st.sidebar.warning("Auto-refresh requires streamlit-autorefresh package")
-
-# Debug utilities in sidebar
-st.sidebar.markdown("---")
-DEBUG = st.sidebar.checkbox("🔧 Debug Mode", value=False)
+# Debug utilities
+DEBUG = st.sidebar.checkbox("🔧 Debug Mode", value=False, key="debug_mode_checkbox")
 
 if DEBUG:
     st.sidebar.markdown("### Debug Tools")
-    if st.sidebar.button("Reset Data"):
+    if st.sidebar.button("Reset Data", key="reset_data_unique"):
         st.session_state.referrals_all = seed_referrals_range(days=60, seed=2025)
         st.session_state.data_loaded = True
         st.sidebar.success("Data reset complete")
     
-    if st.sidebar.button("Save Data"):
+    if st.sidebar.button("Save Data", key="save_data_unique"):
         if save_data():
             st.sidebar.success("Data saved successfully")
     
-    if st.sidebar.button("Generate Test Alert"):
+    if st.sidebar.button("Generate Test Alert", key="test_alert_unique"):
         push_notification("TEST", "Test Notification", "This is a test notification", "TEST-001", "info")
         st.sidebar.success("Test notification sent")
-# Add resource manager in sidebar
-with st.sidebar.expander("🛏️ Resource Manager"):
-    new_icu = st.number_input("ICU Beds Available", 0, icu_total, icu_available)
-    if new_icu != icu_available:
-        st.session_state.resources[facility]["icu_available"] = new_icu
-        auto_save()
-        st.rerun()
 # -------------------- Intervention Tracking Functions --------------------
 def add_referring_intervention(case_id, intervention, details, timestamp=None):
     """Add a referring institution intervention"""
