@@ -83,18 +83,6 @@ def load_config_from_yaml():
 # Uncomment to use YAML config:
 # CONFIG = load_config_from_yaml()
 
-# -------------------- Auto-save Function --------------------
-def auto_save():
-    """Simple auto-save to session state"""
-    if "saved_data" not in st.session_state:
-        st.session_state.saved_data = {}
-    
-    st.session_state.saved_data = {
-        "referrals": st.session_state.referrals_all,
-        "interventions": st.session_state.get("interventions", {}),
-        "resources": st.session_state.get("resources", {}),
-        "notifications": st.session_state.get("notifications", [])
-    }
 # -------------------- Authentication --------------------
 def check_authentication():
     """Simple authentication check - extend for production"""
@@ -129,7 +117,19 @@ def show_login_screen():
 # Check authentication at app start
 check_authentication()
 
-
+# -------------------- Auto-save Function --------------------
+def auto_save():
+    """Simple auto-save to session state"""
+    if "saved_data" not in st.session_state:
+        st.session_state.saved_data = {}
+    
+    st.session_state.saved_data = {
+        "referrals": st.session_state.referrals_all,
+        "interventions": st.session_state.get("interventions", {}),
+        "resources": st.session_state.get("resources", {}),
+        "notifications": st.session_state.get("notifications", [])
+    }
+    
 # -------------------- Page Setup & Style --------------------
 st.set_page_config(page_title="Receiving Hospital – AHECN (Enhanced)", layout="wide")
 
