@@ -294,10 +294,10 @@ if "user" not in st.session_state:
         "facility": "NEIGRIHMS"
     }
 # -------------------- Data Initialization --------------------
-# Ensure we have data to display
+# Ensure we have data to display - MOVED AFTER session state initialization
 if "data_initialized" not in st.session_state:
-    # Load or create demo data
-    if not st.session_state.referrals_all:
+    # Check if referrals_all exists and has data
+    if "referrals_all" not in st.session_state or not st.session_state.referrals_all:
         st.session_state.referrals_all = seed_referrals_range(days=7, seed=2025)
     st.session_state.data_initialized = True
 # -------------------- Utilities --------------------
@@ -973,8 +973,8 @@ if "facilities" not in st.session_state:
 if "facility_meta" not in st.session_state:
     # Initialize ICU bed counts for each facility
     st.session_state.facility_meta = {}
-    for facility in FACILITY_POOL:
-        st.session_state.facility_meta[facility] = {"ICU_open": random.randint(5, 20)}
+    for facility_name in FACILITY_POOL:
+        st.session_state.facility_meta[facility_name] = {"ICU_open": random.randint(5, 20)}
 
 if "notifications" not in st.session_state: 
     st.session_state.notifications = []
@@ -982,15 +982,7 @@ if "show_notifs" not in st.session_state:
     st.session_state.show_notifs = False
 if "notify_rules" not in st.session_state:
     st.session_state.notify_rules = {"RED_only": True, "eta_soon": True, "rejections": True}
-if "resources" not in st.session_state:
-    st.session_state.resources = {
-        "NEIGRIHMS": {"icu_beds": 12, "icu_available": 4},
-        "Civil Hospital Shillong": {"icu_beds": 8, "icu_available": 2},
-        "Nazareth Hospital": {"icu_beds": 6, "icu_available": 1},
-        "Ganesh Das MCH": {"icu_beds": 10, "icu_available": 3},
-        "Sohra Civil Hospital": {"icu_beds": 4, "icu_available": 2},
-        "Shillong Polyclinic & Trauma": {"icu_beds": 8, "icu_available": 0}
-    }
+
 # ADDED: keep per-case event watermark + live buffer + which case is open
 if "last_event_id" not in st.session_state: 
     st.session_state.last_event_id = {}          # {case_id: last_id}
@@ -1002,11 +994,38 @@ if "vitals_buffer" not in st.session_state:
     st.session_state.vitals_buffer = {}         # {case_id: [dict]}
 if "interventions_buffer" not in st.session_state: 
     st.session_state.interventions_buffer = {}  # {case_id: [dict]}
-if "referring_interventions" not in st.session_state:
-    st.session_state.referring_interventions = {}  # {case_id: [interventions]}
-    
-if "emt_interventions" not in st.session_state:
-    st.session_state.emt_interventions = {}  # {case_id: [interventions]}
+
+# Initialize interventions storage
+if "interventions" not in st.session_state:
+    st.session_state.interventions = {}
+
+# Initialize resources
+if "resources" not in st.session_state:
+    st.session_state.resources = {
+        "NEIGRIHMS": {"icu_beds": 12, "icu_available": 4},
+        "Civil Hospital Shillong": {"icu_beds": 8, "icu_available": 2},
+        "Nazareth Hospital": {"icu_beds": 6, "icu_available": 1},
+        "Ganesh Das MCH": {"icu_beds": 10, "icu_available": 3},
+        "Sohra Civil Hospital": {"icu_beds": 4, "icu_available": 2},
+        "Shillong Polyclinic & Trauma": {"icu_beds": 8, "icu_available": 0}
+    }
+
+# Simple demo authentication
+if "authenticated" not in st.session_state:
+    st.session_state.authenticated = True
+    st.session_state.user = {
+        "name": "Dr. Demo User", 
+        "role": "Emergency Physician",
+        "facility": "NEIGRIHMS"
+    }
+
+# Auto-refresh setting
+if "auto_refresh" not in st.session_state:
+    st.session_state.auto_refresh = True
+
+# Data initialization flag
+if "data_initialized" not in st.session_state:
+    st.session_state.data_initialized = True  # We're already initialized above
     
 def push_notification(title: str, body: str, case_id: str = None, urgency: str = "medium"):
     """Enhanced notifications with urgency levels"""
@@ -1400,10 +1419,13 @@ st.subheader("📋 Incoming Patient Summary")
 
 # Calculate today's cases
 today = datetime.now().date()
+# Safe data access with fallback
+if "referrals_all" not in st.session_state or not st.session_state.referrals_all:
+    st.session_state.referrals_all = seed_referrals_range(days=7, seed=2025)
 today_refs = [r for r in st.session_state.referrals_all 
-              if r["times"].get("first_contact_ts") and 
+              if r.get("times", {}).get("first_contact_ts") and 
               datetime.fromtimestamp(r["times"]["first_contact_ts"]).date() == today and
-              r["dest"] == facility]
+              r.get("dest") == facility]
 
 # Create active queue (excluding rejected and completed cases)
 active_statuses = ["PREALERT", "ACCEPTED", "ENROUTE", "ARRIVE_DEST"]
