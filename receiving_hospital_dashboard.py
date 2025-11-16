@@ -1242,94 +1242,21 @@ with k6: st.markdown(f'<div class="kpi"><div class="label">ICU Beds Available</d
 st.markdown('<hr class="soft" />', unsafe_allow_html=True)
 
 # -------------------- Professional Patient Dashboard --------------------
+
+# Define today_refs for the new dashboard
+today = datetime.now().date()
+today_refs = [r for r in refs if r["times"].get("first_contact_ts") and datetime.fromtimestamp(r["times"]["first_contact_ts"]).date() == today]
+
+# Also define queue for the table
+priority_rank = {"STAT":0, "Urgent":1, "Routine":2}
+status_rank = {"PREALERT":0, "ACCEPTED":1, "ENROUTE":2, "ARRIVE_DEST":3, "HANDOVER":4, "REJECTED":5}
+
+queue = sorted(
+    [r for r in today_refs if r["status"] in ["PREALERT","ACCEPTED","ENROUTE","ARRIVE_DEST"]],
+    key=lambda x: (status_rank.get(x["status"],9), priority_rank.get(x["transport"].get("priority","Urgent"),1), -x["times"].get("decision_ts", 0))
+)
+
 st.subheader("📋 Incoming Patient Summary")
-
-# Summary KPIs for today
-today_stats_col1, today_stats_col2, today_stats_col3, today_stats_col4 = st.columns(4)
-with today_stats_col1:
-    st.metric("Total Today", len(today_refs))
-with today_stats_col2:
-    st.metric("Awaiting", len([r for r in today_refs if r["status"] in ["PREALERT", "ACCEPTED"]]))
-with today_stats_col3:
-    st.metric("In Transit", len([r for r in today_refs if r["status"] == "ENROUTE"]))
-with today_stats_col4:
-    st.metric("Arrived", len([r for r in today_refs if r["status"] in ["ARRIVE_DEST", "HANDOVER"]]))
-
-# Filter and search controls
-filter_col1, filter_col2, filter_col3, filter_col4 = st.columns([2, 2, 2, 1])
-with filter_col1:
-    status_filter = st.multiselect("Status", ["PREALERT", "ACCEPTED", "ENROUTE", "ARRIVE_DEST", "HANDOVER", "REJECTED"], default=["PREALERT", "ACCEPTED", "ENROUTE"])
-with filter_col2:
-    triage_filter = st.multiselect("Triage", ["RED", "YELLOW", "GREEN"], default=["RED", "YELLOW", "GREEN"])
-with filter_col3:
-    search_term = st.text_input("Search Patient/ID")
-with filter_col4:
-    st.markdown("")  # Spacer
-    if st.button("Refresh", key="refresh_table"):
-        st.rerun()
-
-# Filter the queue
-filtered_queue = [r for r in queue if r["status"] in status_filter and r["triage"]["decision"]["color"] in triage_filter]
-if search_term:
-    filtered_queue = [r for r in filtered_queue if search_term.lower() in r["patient"]["name"].lower() or search_term.lower() in r["id"].lower()]
-
-# Patient Data Table
-if not filtered_queue:
-    st.info("No patients match the current filters.")
-else:
-    # Create dataframe for the table
-    table_data = []
-    for r in filtered_queue:
-        table_data.append({
-            "ID": r["id"],
-            "Patient": f"{r['patient']['name']}, {r['patient']['age']}{r['patient']['sex'][0]}",
-            "Triage": r["triage"]["decision"]["color"],
-            "Complaint": r["triage"]["complaint"],
-            "Status": r["status"],
-            "Priority": r["transport"]["priority"],
-            "ETA": f"{r['transport'].get('eta_min', '—')} min",
-            "Referring Facility": r["referrer"]["facility"],
-            "Time Since Alert": get_time_ago(r["times"].get("first_contact_ts"))
-        })
-    
-    df_table = pd.DataFrame(table_data)
-    
-    # Display the table with custom styling
-    st.dataframe(
-        df_table,
-        use_container_width=True,
-        height=400,
-        column_config={
-            "Triage": st.column_config.TextColumn(
-                "Triage",
-                help="Patient triage level",
-                width="small"
-            ),
-            "Status": st.column_config.TextColumn(
-                "Status", 
-                width="medium"
-            ),
-            "ETA": st.column_config.TextColumn(
-                "ETA",
-                width="small"
-            )
-        }
-    )
-    
-    # Patient selection for details
-    st.subheader("👨‍⚕️ Patient Details")
-    selected_patient = st.selectbox(
-        "Select patient for detailed view:",
-        options=[f"{r['id']} - {r['patient']['name']}" for r in filtered_queue],
-        key="patient_selector"
-    )
-    
-    if selected_patient:
-        selected_id = selected_patient.split(" - ")[0]
-        selected_case = next((r for r in filtered_queue if r["id"] == selected_id), None)
-        
-        if selected_case:
-            display_patient_details(selected_case)
                 
 # ---------- REAL-TIME FEED PANEL ----------
 def _ingest_events_for(case_id: str):
