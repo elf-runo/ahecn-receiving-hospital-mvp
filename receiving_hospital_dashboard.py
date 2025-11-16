@@ -597,6 +597,23 @@ def predict_transfer_urgency(patient):
     else:
         return "MEDIUM"
 
+def calculate_avg_response_time(facility_cases):
+    """Calculate average response time for a facility"""
+    if not facility_cases:
+        return 0
+    
+    total_time = 0
+    count = 0
+    
+    for case in facility_cases:
+        decision_ts = case['times'].get('decision_ts')
+        dispatch_ts = case['times'].get('dispatch_ts')
+        if decision_ts and dispatch_ts:
+            total_time += (dispatch_ts - decision_ts) / 60  # Convert to minutes
+            count += 1
+    
+    return total_time / count if count else 0
+
 def show_network_impact():
     """Show regional network effect"""
     st.subheader("🌐 Regional Network Coordination")
@@ -621,22 +638,16 @@ def show_network_impact():
     total_efficiency = sum([float(d['Acceptance Rate'].strip('%')) for d in network_data]) / len(network_data)
     st.metric("Network-Wide Coordination Efficiency", f"{total_efficiency:.1f}%")
 
-def calculate_avg_response_time(facility_cases):
-    """Calculate average response time for a facility"""
-    if not facility_cases:
-        return 0
+def calculate_bed_optimization():
+    """Calculate bed utilization improvements"""
+    total_beds = sum([st.session_state.resources[fac]['icu_beds'] for fac in st.session_state.facilities])
+    used_beds = sum([st.session_state.resources[fac]['icu_beds'] - st.session_state.resources[fac]['icu_available'] 
+                    for fac in st.session_state.facilities])
     
-    total_time = 0
-    count = 0
+    current_utilization = (used_beds / total_beds) * 100 if total_beds else 0
+    optimized_utilization = min(current_utilization * 1.25, 95)
     
-    for case in facility_cases:
-        decision_ts = case['times'].get('decision_ts')
-        dispatch_ts = case['times'].get('dispatch_ts')
-        if decision_ts and dispatch_ts:
-            total_time += (dispatch_ts - decision_ts) / 60  # Convert to minutes
-            count += 1
-    
-    return total_time / count if count else 0
+    return int(optimized_utilization - current_utilization)
 
 def business_impact_dashboard():
     """Show immediate ROI evidence"""
@@ -675,17 +686,6 @@ def business_impact_dashboard():
     - **Payback Period**: <3 months at scale
     - **Annualized Impact**: ${(clinical_savings + amb_savings) * 365:,.0f} per hospital network
     """)
-
-def calculate_bed_optimization():
-    """Calculate bed utilization improvements"""
-    total_beds = sum([st.session_state.resources[fac]['icu_beds'] for fac in st.session_state.facilities])
-    used_beds = sum([st.session_state.resources[fac]['icu_beds'] - st.session_state.resources[fac]['icu_available'] 
-                    for fac in st.session_state.facilities])
-    
-    current_utilization = (used_beds / total_beds) * 100 if total_beds else 0
-    optimized_utilization = min(current_utilization * 1.25, 95)
-    
-    return int(optimized_utilization - current_utilization)
 
 def get_competitive_barrier(innovation):
     """Explain why competitors can't easily copy"""
@@ -772,6 +772,22 @@ def monetization_evidence():
     """Show clear path to revenue"""
     investor_ready_monetization()
 
+def calculate_avg_transfer_time():
+    """Calculate average transfer time"""
+    times = []
+    for referral in st.session_state.referrals_all:
+        if referral['times'].get('first_contact_ts') and referral['times'].get('handover_ts'):
+            transfer_time = (referral['times']['handover_ts'] - referral['times']['first_contact_ts']) / 60
+            times.append(transfer_time)
+    
+    return sum(times) / len(times) if times else 0
+
+def calculate_efficiency_gain():
+    """Calculate efficiency improvement over manual processes"""
+    manual_process_time = 180  # 3 hours manual coordination
+    our_process_time = calculate_avg_transfer_time()
+    return int(((manual_process_time - our_process_time) / manual_process_time) * 100) if our_process_time else 25
+
 def innovation_metrics():
     """Live innovation KPIs"""
     st.subheader("🎯 Live Innovation Metrics")
@@ -794,23 +810,7 @@ def innovation_metrics():
         st.metric("Efficiency Gain", f"{efficiency_gain}%")
     
     with col4:
-        st.metric("System Uptime", "99.9%")
-
-def calculate_avg_transfer_time():
-    """Calculate average transfer time"""
-    times = []
-    for referral in st.session_state.referrals_all:
-        if referral['times'].get('first_contact_ts') and referral['times'].get('handover_ts'):
-            transfer_time = (referral['times']['handover_ts'] - referral['times']['first_contact_ts']) / 60
-            times.append(transfer_time)
-    
-    return sum(times) / len(times) if times else 0
-
-def calculate_efficiency_gain():
-    """Calculate efficiency improvement over manual processes"""
-    manual_process_time = 180  # 3 hours manual coordination
-    our_process_time = calculate_avg_transfer_time()
-    return int(((manual_process_time - our_process_time) / manual_process_time) * 100) if our_process_time else 25    
+        st.metric("System Uptime", "99.9%")   
 # -------------------- Investor Dashboard (MOVED TO END) --------------------
 st.markdown("---")
 st.header("🚀 Investor Dashboard - Technology & Business Impact")
@@ -1168,7 +1168,7 @@ def display_clinical_overview(patient):
                 st.error(alert)
         else:
             st.success("✅ No critical alerts")
-
+            
 def display_interventions(patient):
     """Display interventions tab"""
     st.markdown("#### Referring Facility Interventions")
@@ -1355,14 +1355,7 @@ def seed_referrals_range(days=60, seed=2025):
             for _ in range(k):
                 all_refs.append(_seed_one(rng, day_epoch, dest))
     return all_refs
-# TEMPORARY PLACEHOLDER - Add this RIGHT BEFORE session state initialization
-def seed_referrals_range(days=60, seed=2025):
-    """Temporary placeholder - will be replaced by actual function"""
-    return []  # Return empty list for now
 
-# Now the session state initialization can run without errors
-if "referrals_all" not in st.session_state:
-    st.session_state.referrals_all = seed_referrals_range(days=60, seed=2025)
 # -------------------- Session State --------------------
 if "referrals_all" not in st.session_state:
     st.session_state.referrals_all = seed_referrals_range(days=60, seed=2025)
