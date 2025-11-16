@@ -1331,14 +1331,20 @@ else:
 
     with row3[1]:
         st.markdown("**Acceptance vs Rejection (pie)**")
+    
+        # Calculate acceptance/rejection from the current data
+        accepted_count = len(adf[~adf["status"].isin(["REJECTED"])])
+        rejected_count = len(adf[adf["status"] == "REJECTED"])
+    
         accept_rej = pd.DataFrame({
             "Outcome":["Accepted/Progressed","Rejected"],
-            "Count":[int(accept_base - rejected), int(rejected)]
-        })
+            "Count":[accepted_count, rejected_count]
+    })
+    
         ar_chart = alt.Chart(accept_rej).mark_arc(innerRadius=50).encode(
             theta="Count:Q", color=alt.Color("Outcome:N", scale=alt.Scale(range=["#10b981","#ef4444"])),
             tooltip=["Outcome","Count"]
-        ).properties(height=300)
+    ).properties(height=300)
         st.altair_chart(ar_chart, use_container_width=True)        
     # SLAs + breach panel
     st.markdown("**SLA Benchmarks & Breaches**")
@@ -1382,9 +1388,18 @@ else:
     # ICU demand proxy
     st.markdown("**ICU Demand vs Open Beds (proxy)**")
     icu_demand = int(adf[(adf["triage"]=="RED") & adf["status"].isin(["ACCEPTED","ENROUTE","ARRIVE_DEST","HANDOVER"])].shape[0])
-    icu_open = int(st.session_state.facility_meta[facility]["ICU_open"])
-    idf = pd.DataFrame({"Metric":["ICU Demand (RED active)","ICU Open Beds"], "Value":[icu_demand, icu_open]})
-    bar = alt.Chart(idf).mark_bar().encode(x=alt.X("Metric:N", sort=None), y="Value:Q", color="Metric:N", tooltip=["Metric","Value"]).properties(height=300)
+    icu_open = st.session_state.resources[facility]["icu_available"]
+    icu_total = st.session_state.resources[facility]["icu_beds"]
+    idf = pd.DataFrame({
+        "Metric":["ICU Demand (RED active)", f"ICU Open Beds ({icu_open}/{icu_total})"], 
+        "Value":[icu_demand, icu_open]
+    })
+    bar = alt.Chart(idf).mark_bar().encode(
+        x=alt.X("Metric:N", sort=None), 
+        y="Value:Q", 
+        color="Metric:N", 
+        tooltip=["Metric","Value"]
+    ).properties(height=300)
     st.altair_chart(bar, use_container_width=True)
 
     # Range table & export
